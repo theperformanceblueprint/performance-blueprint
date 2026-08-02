@@ -1039,9 +1039,14 @@ function App() {
                     <div style={{ display: "grid", gap: 10 }}>
                       {items.map((item) => (
                         <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #1A1E21" }}>
-                          <div>
-                            <div style={{ fontSize: 14, color: subscribed ? "#E8ECEE" : "#5C6469" }}>{item.title}</div>
-                            <div style={{ fontSize: 12, color: "#5C6469" }}>{item.description}</div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                            {item.thumbnail_url && (
+                              <img src={item.thumbnail_url} alt="" style={{ width: 56, height: 56, objectFit: "cover", flexShrink: 0, background: "#161A1D" }} />
+                            )}
+                            <div>
+                              <div style={{ fontSize: 14, color: subscribed ? "#FFFFFF" : "#9AA1A6" }}>{item.title}</div>
+                              <div style={{ fontSize: 12, color: "#B2B8BC" }}>{item.description}</div>
+                            </div>
                           </div>
                           {subscribed ? (
                             <button
@@ -1096,8 +1101,8 @@ function App() {
                   {section.items.map((item) => (
                     <div key={item.name} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #1A1E21" }}>
                       <div>
-                        <div style={{ fontSize: 14, color: subscribed ? "#E8ECEE" : "#5C6469" }}>{item.name}</div>
-                        <div style={{ fontSize: 12, color: "#5C6469" }}>{item.desc}</div>
+                        <div style={{ fontSize: 14, color: subscribed ? "#FFFFFF" : "#9AA1A6" }}>{item.name}</div>
+                        <div style={{ fontSize: 12, color: "#B2B8BC" }}>{item.desc}</div>
                       </div>
                       {subscribed ? (
                         <button style={{ background: "transparent", border: "1px solid #2C3236", color: "#E8ECEE", padding: "6px 12px", fontSize: 12, cursor: "pointer", whiteSpace: "nowrap" }}>Open</button>
