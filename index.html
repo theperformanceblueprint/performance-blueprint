@@ -1044,7 +1044,7 @@ function App() {
                               <img src={item.thumbnail_url} alt="" style={{ width: 56, height: 56, objectFit: "cover", flexShrink: 0, background: "#161A1D" }} />
                             )}
                             <div>
-                              <div style={{ fontSize: 14, color: subscribed ? "#FFFFFF" : "#9AA1A6" }}>{item.title}</div>
+                              <div style={{ fontSize: 14, fontWeight: 700, color: subscribed ? "#FFFFFF" : "#D5D9DB" }}>{item.title}</div>
                               <div style={{ fontSize: 12, color: "#B2B8BC" }}>{item.description}</div>
                             </div>
                           </div>
@@ -1101,7 +1101,7 @@ function App() {
                   {section.items.map((item) => (
                     <div key={item.name} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #1A1E21" }}>
                       <div>
-                        <div style={{ fontSize: 14, color: subscribed ? "#FFFFFF" : "#9AA1A6" }}>{item.name}</div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: subscribed ? "#FFFFFF" : "#D5D9DB" }}>{item.name}</div>
                         <div style={{ fontSize: 12, color: "#B2B8BC" }}>{item.desc}</div>
                       </div>
                       {subscribed ? (
