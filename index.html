@@ -320,7 +320,7 @@ const QUESTIONS = [
   { phase: "Phase 1", section: "Athlete Information", key: "email", label: "Email address", type: "text", placeholder: "you@example.com" },
   { phase: "Phase 1", section: "Athlete Information", key: "age", label: "Age", type: "number", placeholder: "17" },
   { phase: "Phase 1", section: "Athlete Information", key: "height", label: "Height", type: "text", placeholder: "e.g. 5'10\"" },
-  { phase: "Phase 1", section: "Athlete Information", key: "weight", label: "Weight", type: "text", placeholder: "e.g. 165 lbs" },
+  { phase: "Phase 1", section: "Athlete Information", key: "weight", label: "Bodyweight (lbs)", type: "number", placeholder: "165" },
   { phase: "Phase 1", section: "Athlete Information", key: "sport", label: "Sport", type: "select", options: SPORTS },
   { phase: "Phase 1", section: "Athlete Information", key: "position", label: "Position", type: "select", dependsOn: "sport" },
   { phase: "Phase 1", section: "Athlete Information", key: "competitiveLevel", label: "Competitive level", type: "select", options: ["Youth / Recreational", "High School", "Club / Travel", "College", "Semi-Pro / Professional"] },
@@ -346,6 +346,7 @@ const QUESTIONS = [
 
 const MOVEMENTS = [
   { id: "deepSquat", name: "Bodyweight Deep Squat", instructions: "5 repetitions", views: "Front and side view", lookingFor: ["Ankle mobility", "Hip mobility", "Thoracic extension", "Foot stability", "Trunk control"], tutorialUrl: "" },
+  { id: "cmj", name: "Countermovement Jump", instructions: "3 repetitions", views: "Front and side view", lookingFor: ["Arm swing coordination", "Triple extension (hip/knee/ankle)", "Landing mechanics", "Knee valgus", "Symmetry"], tutorialUrl: "" },
   { id: "hipFlexionHold", name: "Single Leg Hip Flexion Hold", instructions: "90° hip flexion — hold for 20 seconds each side", views: "", lookingFor: ["Pelvic control", "Hip stability", "Balance", "Trunk control"], tutorialUrl: "" },
   { id: "quadrupedHipExt", name: "Quadruped Hip Extension Hold", instructions: "Extend one leg — hold 20 seconds", views: "", lookingFor: ["Lumbar compensation", "Glute activation", "Pelvic rotation"], tutorialUrl: "" },
   { id: "singleLegSquat", name: "Single Leg Squat", instructions: "5 reps each leg", views: "Front and side", lookingFor: ["Knee valgus", "Balance", "Hip control", "Ankle mobility"], tutorialUrl: "" },
@@ -367,9 +368,88 @@ function calcESD(sj, cmj) {
 
 function interpretESD(esd) {
   if (esd === null) return null;
-  if (esd < 10) return { label: "< 10% — Poor elastic utilization", detail: "May need plyometric/reactive emphasis if strength is adequate." };
-  if (esd <= 20) return { label: "10–20% — Balanced profile", detail: "No strong bias toward either force production or elastic utilization." };
-  return { label: "> 20% — Strong use of the stretch-shortening cycle", detail: "Compare with sprint and strength data before deciding whether more maximal strength is needed." };
+  if (esd < 10) return { label: "< 10% — Poor elastic utilization", detail: "May need plyometric/reactive emphasis if strength is adequate.", tier: "low" };
+  if (esd <= 20) return { label: "10–20% — Balanced profile", detail: "No strong bias toward either force production or elastic utilization.", tier: "mid" };
+  return { label: "> 20% — Strong use of the stretch-shortening cycle", detail: "Compare with sprint and strength data before deciding whether more maximal strength is needed.", tier: "high" };
+}
+
+// Simplified sprint acceleration / force-velocity profile from four splits
+// (10/20/30/40yd). This is NOT a full Samozino-style F-V profile — a true
+// F-V profile needs body mass and a continuous velocity-time curve (radar
+// gun or similar) to solve for F0, V0, and Pmax. What this gives instead:
+// segment (split-to-split) velocities and where the athlete is still
+// gaining speed vs. plateauing within the tested distance, which is a
+// reasonable practical proxy when only checkpoint splits are available.
+const YARD_TO_M = 0.9144;
+const LB_TO_KG = 0.453592;
+function calcSprintFV(t10, t20, t30, t40, bodyweightLbs) {
+  const a = parseFloat(t10), b = parseFloat(t20), c = parseFloat(t30), d = parseFloat(t40);
+  if (!a || !b || !c || !d || b <= a || c <= b || d <= c) return null;
+  const segM = 10 * YARD_TO_M;
+  const v1 = segM / a;
+  const v2 = segM / (b - a);
+  const v3 = segM / (c - b);
+  const v4 = segM / (d - c);
+  const vEst = Math.max(v1, v2, v3, v4);
+  const accelRatio = v1 / vEst;
+  let tier, label, detail;
+  if (accelRatio < 0.70) {
+    tier = "velocity"; label = "Velocity-dominant";
+    detail = "Still gaining significant speed through the later splits — meaningful speed reserve past the initial acceleration phase.";
+  } else if (accelRatio <= 0.85) {
+    tier = "balanced"; label = "Balanced";
+    detail = "Reasonably even blend of early acceleration and continued speed gain across the splits.";
+  } else {
+    tier = "force"; label = "Force/Acceleration-dominant";
+    detail = "Reaches most of its speed within the first 10yd and plateaus early — strong initial force application relative to continued acceleration.";
+  }
+
+  // Rough force/power estimate, only computed if bodyweight is available.
+  // This treats each segment's velocity change over time as a net
+  // horizontal acceleration and applies F = m·a, P = F·v — a simplified
+  // kinematic estimate, NOT the full Samozino model (which also accounts
+  // for air resistance and fits a continuous velocity curve rather than
+  // four discrete segments). Useful as a rough, bodyweight-adjusted view,
+  // not a lab-precision number.
+  let force = null;
+  const bw = parseFloat(bodyweightLbs);
+  if (bw > 0) {
+    const massKg = bw * LB_TO_KG;
+    const a1 = v1 / a; // from rest
+    const a2 = (v2 - v1) / (b - a);
+    const a3 = (v3 - v2) / (c - b);
+    const a4 = (v4 - v3) / (d - c);
+    const F1 = massKg * a1, F2 = massKg * a2, F3 = massKg * a3, F4 = massKg * a4;
+    const P1 = F1 * v1, P2 = F2 * v2, P3 = F3 * v3, P4 = F4 * v4;
+    const forces = [F1, F2, F3, F4];
+    const powers = [P1, P2, P3, P4];
+    const Fmax = Math.max(...forces.map((f) => Math.abs(f)));
+    const Pmax = Math.max(...powers.map((p) => Math.abs(p)));
+    force = { massKg, forces, powers, Fmax, Pmax, FmaxPerKg: Fmax / massKg, PmaxPerKg: Pmax / massKg };
+  }
+
+  return { v1, v2, v3, v4, vEst, accelRatio, tier, label, detail, force };
+}
+
+// Converges the ESD tier (jump/elastic quality) with the sprint FV tier
+// (acceleration/speed quality) into one action step. This is a rule-based
+// synthesis, not a diagnostic algorithm — it's meant to give a starting
+// point for the coach's own read of the full profile, not a final answer.
+function convergeSummary(esdInterp, fv) {
+  if (!esdInterp || !fv) return null;
+  const key = `${esdInterp.tier}_${fv.tier}`;
+  const table = {
+    low_force: { priority: "Power Priority", text: "Limited elastic utilization paired with strong early force application that plateaus quickly — prioritize plyometric/reactive work to convert existing force capacity into elastic power." },
+    low_balanced: { priority: "Power Priority", text: "Limited elastic utilization with a balanced sprint profile — prioritize plyometric and reactive strength work." },
+    low_velocity: { priority: "Power Priority", text: "Limited elastic utilization but still gaining speed late in the sprint — prioritize reactive/plyometric work, with continued max-velocity exposure as a secondary focus." },
+    mid_force: { priority: "Speed Priority", text: "Balanced elastic utilization with strong early acceleration that plateaus quickly — emphasize max-velocity mechanics and exposure to extend the speed curve." },
+    mid_balanced: { priority: "Balanced", text: "Well-rounded profile across elastic utilization and sprint mechanics — continue balanced programming across strength, power, and speed." },
+    mid_velocity: { priority: "Strength Priority", text: "Balanced elastic utilization but still building speed late, suggesting lighter early force application — prioritize acceleration mechanics and force production out of the start." },
+    high_force: { priority: "Speed Priority", text: "Strong stretch-shortening cycle use with strong early acceleration that plateaus quickly — force and elastic qualities look solid; extend the speed curve with max-velocity work." },
+    high_balanced: { priority: "Balanced", text: "Strong stretch-shortening cycle use with a balanced sprint profile — strong across the board; continue current programming and monitor." },
+    high_velocity: { priority: "Balanced", text: "Strong stretch-shortening cycle use and still gaining speed late in the sprint — a strong power-and-speed profile; fine-tune early acceleration mechanics as a secondary focus." },
+  };
+  return table[key] || null;
 }
 
 const ADDITIONAL_TESTS = [
@@ -479,6 +559,8 @@ function App() {
   const sprintSplit = (testResults.sprint10 && testResults.sprint20)
     ? (parseFloat(testResults.sprint20) - parseFloat(testResults.sprint10))
     : null;
+  const sprintFV = calcSprintFV(testResults.sprint10, testResults.sprint20, testResults.sprint30, testResults.sprint40, profile.weight);
+  const summary = convergeSummary(esdInterpretation, sprintFV);
 
   const q = QUESTIONS[step];
   const canProceed = q ? (q.type === "multiselect" ? (profile[q.key] || []).length > 0 : !!profile[q.key]) : true;
@@ -894,16 +976,66 @@ function App() {
                     <label style={{ fontSize: 12, color: "#8A9198" }}>20-yard sprint (seconds)</label>
                     <input placeholder="e.g. 3.22" value={testResults.sprint20 || ""} onChange={(e) => setTest("sprint20", e.target.value)} />
                   </div>
+                  <div>
+                    <label style={{ fontSize: 12, color: "#8A9198" }}>30-yard sprint (seconds)</label>
+                    <input placeholder="e.g. 4.45" value={testResults.sprint30 || ""} onChange={(e) => setTest("sprint30", e.target.value)} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 12, color: "#8A9198" }}>40-yard sprint (seconds)</label>
+                    <input placeholder="e.g. 5.60" value={testResults.sprint40 || ""} onChange={(e) => setTest("sprint40", e.target.value)} />
+                  </div>
                 </div>
                 {sprintSplit !== null && !isNaN(sprintSplit) && (
-                  <div style={{ background: "#161A1D", border: "1px solid #2C3236", padding: "10px 12px" }}>
+                  <div style={{ background: "#161A1D", border: "1px solid #2C3236", padding: "10px 12px", marginBottom: sprintFV ? 10 : 0 }}>
                     <div style={{ fontSize: 13, color: "#E8ECEE" }}>10→20yd split: <strong>{sprintSplit.toFixed(2)}s</strong></div>
                     <div style={{ fontSize: 12, color: "#8A9198", marginTop: 4 }}>
                       This split shows how much additional time it took to cover the second 10 yards. Patterns here can suggest whether an athlete is relatively better at initial acceleration or at continuing to build speed — but weigh this alongside sport, training age, and strength measures.
                     </div>
                   </div>
                 )}
+                {sprintFV && (
+                  <div style={{ background: "#161A1D", border: "1px solid #2C3236", padding: "10px 12px" }}>
+                    <div style={{ fontSize: 13, color: "#E8ECEE", marginBottom: 6 }}>
+                      Sprint FV Profile: <strong style={{ color: "#D8342A" }}>{sprintFV.label}</strong>
+                    </div>
+                    <div style={{ fontSize: 11, color: "#8A9198", marginBottom: 8 }}>
+                      Segment velocities — 0-10yd: {sprintFV.v1.toFixed(2)} m/s · 10-20yd: {sprintFV.v2.toFixed(2)} m/s ·
+                      20-30yd: {sprintFV.v3.toFixed(2)} m/s · 30-40yd: {sprintFV.v4.toFixed(2)} m/s
+                    </div>
+                    {sprintFV.force ? (
+                      <div style={{ fontSize: 11, color: "#8A9198", marginBottom: 8 }}>
+                        Estimated from bodyweight ({sprintFV.force.massKg.toFixed(1)} kg) — Peak horizontal force:{" "}
+                        <strong style={{ color: "#E8ECEE" }}>{sprintFV.force.Fmax.toFixed(0)} N</strong> ({sprintFV.force.FmaxPerKg.toFixed(1)} N/kg) ·
+                        Peak power: <strong style={{ color: "#E8ECEE" }}>{sprintFV.force.Pmax.toFixed(0)} W</strong> ({sprintFV.force.PmaxPerKg.toFixed(1)} W/kg)
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 11, color: "#5C6469", marginBottom: 8 }}>
+                        Add bodyweight in Phase 1 to also see estimated peak force and power for this profile.
+                      </div>
+                    )}
+                    <div style={{ fontSize: 12, color: "#8A9198" }}>{sprintFV.detail}</div>
+                    <p style={{ fontSize: 10, color: "#5C6469", marginTop: 8, marginBottom: 0 }}>
+                      This is a simplified acceleration profile from checkpoint splits, not a full lab-grade force-velocity
+                      profile (which requires a continuous velocity-time curve and accounts for air resistance). Treat it as a starting point.
+                    </p>
+                  </div>
+                )}
               </div>
+
+              {summary && (
+                <div className="card" style={{ marginBottom: 16, border: "1px solid #2D6FE0" }}>
+                  <div style={{ fontSize: 12, letterSpacing: 1, color: "#2D6FE0", textTransform: "uppercase", marginBottom: 10 }}>Summary &amp; Action Step</div>
+                  <p style={{ color: "#E8ECEE", fontSize: 14, lineHeight: 1.7, margin: "0 0 12px" }}>{summary.text}</p>
+                  <div style={{ display: "inline-block", background: "#1B2A45", border: "1px solid #2D6FE0", padding: "8px 14px" }}>
+                    <span style={{ fontSize: 12, color: "#8FA8D9", textTransform: "uppercase", letterSpacing: 0.5 }}>Suggested priority: </span>
+                    <span style={{ fontSize: 13, color: "#E8ECEE", fontWeight: 700 }}>{summary.priority}</span>
+                  </div>
+                  <p style={{ fontSize: 10, color: "#5C6469", marginTop: 10, marginBottom: 0 }}>
+                    Converges your Explosive Strength Deficit (jump elasticity) with your Sprint FV Profile (acceleration
+                    pattern) into one starting recommendation — your coach will confirm this against the full intake.
+                  </p>
+                </div>
+              )}
 
               <div className="card" style={{ marginBottom: 16 }}>
                 <div style={{ fontSize: 12, letterSpacing: 1, color: "#6EBF7A", textTransform: "uppercase", marginBottom: 12 }}>Additional Tests</div>
@@ -1237,4 +1369,5 @@ ReactDOM.createRoot(document.getElementById("root")).render(<App />);
 </script>
 </body>
 </html>
+
 
