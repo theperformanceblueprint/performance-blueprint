@@ -491,6 +491,38 @@ function convergeSummary(esdInterp, fv) {
   return table[key] || null;
 }
 
+// Builds the "Combined Athletic Profile" card (Sprint F-V + explosive
+// strength) shown at the bottom of the printed report. Modeled on a
+// Sprint F-V + DSI (Dynamic Strength Index) integrated profile — but this
+// uses ESD (Explosive Strength Deficit, from SJ vs. CMJ) instead of true
+// DSI, since DSI is normally derived from an isometric mid-thigh pull or
+// similar force-plate test we don't collect here. Same spirit — converge
+// two independent signals and flag where they agree or conflict — just
+// built from the data this platform actually has.
+function buildCombinedProfile(esdInterp, fv) {
+  if (!esdInterp || !fv) return null;
+  const sprintLabel = { velocity: "Force-Deficit", balanced: "Balanced", force: "Speed-Deficit" }[fv.tier];
+  const esdLabel = { low: "Low (Poor Elastic Use)", mid: "Balanced", high: "High (Strong Elastic Use)" }[esdInterp.tier];
+  const sprintPriorities = {
+    velocity: ["Heavy sled pushing (>70% BW)", "Hip-dominant strength — trap bar deadlift, RDL", "Resisted sprints (10–20% BW)", "Nordic hamstring curls — eccentric emphasis"],
+    balanced: ["Continue concurrent force and velocity development", "Maintain even acceleration and top-end speed exposure"],
+    force: ["Max-velocity sprint exposure — flys, build-ups", "Sprint-float-sprint or wicket drills", "Contrast training — heavy sled push into max-effort sprint", "Maintain strength base — don't neglect force work"],
+  }[fv.tier];
+  const esdPriorities = {
+    low: ["Plyometrics — depth drops, hurdle hops, bounding", "Jump training — maximal intent CMJ, SLJ, reactive jumps", "Short-duration explosive power (10–30s efforts)", "Sprint-contrast methods — heavy sled push into max-effort sprint", "Maintain strength base — don't neglect force work entirely"],
+    mid: ["Continue balanced plyometric and strength work", "Monitor with periodic re-testing", "No single elastic-quality bias to correct"],
+    high: ["Maintain current plyometric/elastic work", "Compare against absolute strength markers before adding max-strength emphasis", "Consider maximal strength work only if underlying force capacity is limited"],
+  }[esdInterp.tier];
+  const aligned =
+    (esdInterp.tier === "low" && fv.tier === "velocity") ||
+    (esdInterp.tier === "high" && fv.tier === "force") ||
+    (esdInterp.tier === "mid" && fv.tier === "balanced");
+  const summary = `Sprint F-V suggests ${sprintLabel.toLowerCase()} emphasis; ESD suggests a ${esdLabel.toLowerCase()} priority. ${
+    aligned ? "Signals align — proceed with confidence on the shared emphasis." : "Signals diverge — run a concurrent block addressing both and re-test to determine the primary need."
+  }`;
+  return { sprintLabel, esdLabel, aligned, summary, sprintPriorities, esdPriorities };
+}
+
 const ADDITIONAL_TESTS = [
   { key: "broadJump", label: "Broad Jump", placeholder: "e.g. 7'2\"" },
   { key: "rsi", label: "Reactive Strength Index (if possible)", placeholder: "e.g. 1.8" },
@@ -508,10 +540,18 @@ const ATHLETE_CATEGORIES = [
 ];
 
 // Movement Quality Scorecard categories for the Coach Tools report. These
-// are scored by the coach (0-100) after reviewing the athlete's Phase 2
-// movement videos — there's no automated video scoring here, this is a
-// structured way to record the coach's own read of the tape.
+// are scored by the coach after reviewing the athlete's Phase 2 movement
+// videos — there's no automated video scoring here, this is a structured
+// way to record the coach's own read of the tape, using an FMS-style 0-3
+// scale rather than a free 0-100 number.
 const SCORECARD_CATEGORIES = ["Ankle Mobility", "Hip Mobility", "Thoracic Extension", "Trunk Control", "Balance", "Knee Control", "Shoulder Control", "Landing Mechanics"];
+
+const FMS_SCORES = [
+  { score: 3, label: "3 — Optimal", color: "#2D6FE0", desc: "Performs the movement correctly without any compensations." },
+  { score: 2, label: "2 — Some compensation", color: "#6EBF7A", desc: "Some compensations present; needs improvement but not immediate concern." },
+  { score: 1, label: "1 — Significant compensation", color: "#E8A33D", desc: "Significant compensations; higher injury risk, needs corrective exercise." },
+  { score: 0, label: "0 — Pain", color: "#D8342A", desc: "Pain during any part of the movement; refer for further medical evaluation." },
+];
 
 // Payment links: paste a real Stripe Payment Link (created in the Stripe
 // Dashboard under Payment Links — no backend/API keys needed) here as a
@@ -649,6 +689,7 @@ function App() {
   const coachFV = calcSprintFV(coachTest.sprint10, coachTest.sprint20, coachTest.sprint30, coachTest.sprint40, coachAnswers.weight);
   const coachSuggestedSummary = convergeSummary(coachEsdInterp, coachFV);
   const finalPriority = priorityOverride || (coachSuggestedSummary && coachSuggestedSummary.priority) || "";
+  const combinedProfile = buildCombinedProfile(coachEsdInterp, coachFV);
 
   const setTest = (key, value) => setTestResults({ ...testResults, [key]: value });
 
@@ -1440,15 +1481,47 @@ function App() {
             {coachData && (
               <>
                 <div className="card" style={{ marginBottom: 20 }}>
-                  <div style={{ fontSize: 12, letterSpacing: 1, color: "#D8342A", textTransform: "uppercase", marginBottom: 12 }}>2. Movement Quality Scorecard</div>
+                  <div style={{ fontSize: 12, letterSpacing: 1, color: "#D8342A", textTransform: "uppercase", marginBottom: 12 }}>2. Movement Quality Scorecard (FMS-style)</div>
                   <p style={{ color: "#5C6469", fontSize: 12, marginBottom: 12 }}>
-                    Score each category 0-100 after reviewing this athlete's Phase 2 videos ({coachData.videoMovementIds.length} of {MOVEMENTS.length} movements uploaded).
+                    Score each category after reviewing this athlete's Phase 2 videos ({coachData.videoMovementIds.length} of {MOVEMENTS.length} movements uploaded).
                   </p>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 16, fontSize: 11, color: "#8A9198" }}>
+                    {FMS_SCORES.map((s) => (
+                      <div key={s.score} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                        <span style={{ width: 8, height: 8, borderRadius: "50%", background: s.color, display: "inline-block" }} />
+                        {s.label}
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display: "grid", gap: 12 }}>
                     {SCORECARD_CATEGORIES.map((cat) => (
                       <div key={cat}>
                         <label style={{ fontSize: 12, color: "#8A9198" }}>{cat}</label>
-                        <input type="number" min="0" max="100" placeholder="0-100" value={scorecard[cat] || ""} onChange={(e) => setScorecard({ ...scorecard, [cat]: e.target.value })} />
+                        <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+                          {FMS_SCORES.slice().reverse().map((s) => {
+                            const selected = scorecard[cat] === String(s.score);
+                            return (
+                              <button
+                                key={s.score}
+                                type="button"
+                                onClick={() => setScorecard({ ...scorecard, [cat]: String(s.score) })}
+                                title={s.desc}
+                                style={{
+                                  flex: 1,
+                                  padding: "8px 0",
+                                  fontSize: 13,
+                                  fontWeight: 700,
+                                  cursor: "pointer",
+                                  background: selected ? s.color : "#161A1D",
+                                  color: selected ? "#0F1214" : "#8A9198",
+                                  border: selected ? `1px solid ${s.color}` : "1px solid #2C3236",
+                                }}
+                              >
+                                {s.score}
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -1509,21 +1582,32 @@ function App() {
                 </div>
 
                 <div style={{ padding: 24 }}>
-                  <div style={{ fontSize: 12, color: "#2D6FE0", fontWeight: 700, letterSpacing: 1, marginBottom: 10 }}>MOVEMENT QUALITY SCORECARD</div>
+                  <div style={{ fontSize: 12, color: "#2D6FE0", fontWeight: 700, letterSpacing: 1, marginBottom: 10 }}>MOVEMENT QUALITY SCORECARD (FMS-STYLE, 0–3)</div>
                   <div style={{ marginBottom: 24 }}>
-                    {SCORECARD_CATEGORIES.filter((c) => scorecard[c]).map((cat) => (
-                      <div key={cat} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-                        <div style={{ width: 130, fontSize: 12 }}>{cat}</div>
-                        <div style={{ flex: 1, background: "#EEE", height: 10 }}>
-                          <div style={{ width: `${scorecard[cat]}%`, background: "#2D6FE0", height: 10 }} />
+                    {SCORECARD_CATEGORIES.filter((c) => scorecard[c] !== undefined && scorecard[c] !== "").map((cat) => {
+                      const scoreInfo = FMS_SCORES.find((s) => String(s.score) === scorecard[cat]);
+                      return (
+                        <div key={cat} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                          <div style={{ width: 130, fontSize: 12 }}>{cat}</div>
+                          <div style={{ flex: 1, background: "#EEE", height: 10 }}>
+                            <div style={{ width: `${(Number(scorecard[cat]) / 3) * 100}%`, background: scoreInfo ? scoreInfo.color : "#2D6FE0", height: 10 }} />
+                          </div>
+                          <div style={{ width: 40, fontSize: 12, textAlign: "right" }}>{scorecard[cat]}/3</div>
                         </div>
-                        <div style={{ width: 30, fontSize: 12, textAlign: "right" }}>{scorecard[cat]}</div>
-                      </div>
-                    ))}
-                    {SCORECARD_CATEGORIES.filter((c) => scorecard[c]).length === 0 && (
+                      );
+                    })}
+                    {SCORECARD_CATEGORIES.filter((c) => scorecard[c] !== undefined && scorecard[c] !== "").length === 0 && (
                       <p style={{ fontSize: 12, color: "#888" }}>No scores entered yet.</p>
                     )}
                   </div>
+
+                  {SCORECARD_CATEGORIES.some((c) => scorecard[c] === "0") && (
+                    <div style={{ background: "#FBE9E7", border: "1px solid #D8342A", padding: 12, marginBottom: 24 }}>
+                      <p style={{ fontSize: 12, color: "#B02A20", fontWeight: 700, margin: 0 }}>
+                        Pain reported during one or more movements (score of 0) — recommend further medical evaluation before proceeding with corrective or performance programming for that movement pattern.
+                      </p>
+                    </div>
+                  )}
 
                   <div style={{ fontSize: 12, color: "#D8342A", fontWeight: 700, letterSpacing: 1, marginBottom: 8 }}>MOBILITY &amp; STABILITY FINDINGS</div>
                   <p style={{ fontSize: 13, lineHeight: 1.6, marginBottom: 24, whiteSpace: "pre-wrap" }}>{mobilityFindings || "—"}</p>
@@ -1559,10 +1643,40 @@ function App() {
                     <p style={{ fontSize: 12, color: "#888", marginBottom: 24 }}>No sprint testing data on file.</p>
                   )}
 
-                  <div style={{ background: "#1B2A45", padding: 16 }}>
+                  <div style={{ background: "#1B2A45", padding: 16, marginBottom: combinedProfile ? 24 : 0 }}>
                     <div style={{ fontSize: 12, color: "#8FA8D9", fontWeight: 700, letterSpacing: 1, marginBottom: 6 }}>TRAINING PRIORITY</div>
                     <div style={{ fontSize: 16, color: "#14181B", fontWeight: 700 }}>{finalPriority || "Not yet determined"}</div>
                   </div>
+
+                  {combinedProfile && (
+                    <div style={{ background: "#DCE9F9", border: "1px solid #B8D2ED", padding: 16 }}>
+                      <div style={{ fontSize: 13, color: "#1B3A5C", fontWeight: 700, marginBottom: 10 }}>⊙ COMBINED ATHLETIC PROFILE — SPRINT F-V + ESD</div>
+                      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+                        <span style={{ background: "#FBE0DC", color: "#B02A20", fontSize: 12, fontWeight: 700, padding: "6px 12px" }}>Sprint: {combinedProfile.sprintLabel}</span>
+                        <span style={{ background: "#DCE9F9", border: "1px solid #B8D2ED", color: "#1B3A5C", fontSize: 12, fontWeight: 700, padding: "6px 12px" }}>ESD: {combinedProfile.esdLabel}</span>
+                        <span style={{ background: "#fff", border: "1px solid #D5D9DB", color: "#333", fontSize: 12, fontWeight: 700, padding: "6px 12px" }}>
+                          {combinedProfile.aligned ? "Aligned signals" : "Mixed signals"}
+                        </span>
+                      </div>
+                      <div style={{ background: "#fff", padding: 12, marginBottom: 12, fontSize: 13, color: "#222", lineHeight: 1.5 }}>
+                        {combinedProfile.summary}
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                        <div style={{ background: "#FBE9E7", padding: 12 }}>
+                          <div style={{ fontSize: 12, color: "#B02A20", fontWeight: 700, marginBottom: 6 }}>Sprint F-V priorities</div>
+                          <ol style={{ margin: 0, paddingLeft: 16, fontSize: 12, color: "#333", lineHeight: 1.7 }}>
+                            {combinedProfile.sprintPriorities.map((p) => <li key={p}>{p}</li>)}
+                          </ol>
+                        </div>
+                        <div style={{ background: "#DCE9F9", padding: 12 }}>
+                          <div style={{ fontSize: 12, color: "#1B3A5C", fontWeight: 700, marginBottom: 6 }}>ESD prescription</div>
+                          <ol style={{ margin: 0, paddingLeft: 16, fontSize: 12, color: "#333", lineHeight: 1.7 }}>
+                            {combinedProfile.esdPriorities.map((p) => <li key={p}>{p}</li>)}
+                          </ol>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div style={{ background: "#14181B", padding: "12px 24px", textAlign: "center" }}>
