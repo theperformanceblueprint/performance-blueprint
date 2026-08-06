@@ -386,14 +386,14 @@ const QUESTIONS = [
 const MOVEMENTS = [
   { id: "deepSquat", name: "Bodyweight Deep Squat", instructions: "5 repetitions", views: "Front and side view", lookingFor: ["Ankle mobility", "Hip mobility", "Thoracic extension", "Foot stability", "Trunk control"], tutorialUrl: "" },
   { id: "cmj", name: "Countermovement Jump", instructions: "3 repetitions", views: "Front and side view", lookingFor: ["Arm swing coordination", "Triple extension (hip/knee/ankle)", "Landing mechanics", "Knee valgus", "Symmetry"], tutorialUrl: "" },
-  { id: "hipFlexionHold", name: "Single Leg Hip Flexion Hold", instructions: "90° hip flexion — hold for 20 seconds each side", views: "", lookingFor: ["Pelvic control", "Hip stability", "Balance", "Trunk control"], tutorialUrl: "" },
-  { id: "quadrupedHipExt", name: "Quadruped Hip Extension Hold", instructions: "Extend one leg — hold 20 seconds", views: "", lookingFor: ["Lumbar compensation", "Glute activation", "Pelvic rotation"], tutorialUrl: "" },
+  { id: "hipFlexionHold", name: "Single Leg Hip Flexion Hold", instructions: "90° hip flexion — hold for 20 seconds each side", views: "", lookingFor: ["Lateral hip stability", "Hip flexion recruitment pattern", "Pelvic control", "Balance"], tutorialUrl: "" },
+  { id: "quadrupedHipExt", name: "Quadruped Hip Extension Hold", instructions: "Extend one leg — hold 20 seconds", views: "", lookingFor: ["Hip extension recruitment pattern", "Lumbar compensation", "Glute activation", "Pelvic rotation"], tutorialUrl: "" },
   { id: "singleLegSquat", name: "Single Leg Squat", instructions: "5 reps each leg", views: "Front and side", lookingFor: ["Knee valgus", "Balance", "Hip control", "Ankle mobility"], tutorialUrl: "" },
   { id: "pushUp", name: "Push-Up", instructions: "Maximum quality reps", views: "", lookingFor: ["Scapular control", "Trunk stiffness", "Shoulder positioning"], tutorialUrl: "" },
   { id: "singleLegHinge", name: "Single Leg Hinge", instructions: "5 reps each side", views: "", lookingFor: ["Posterior chain control", "Pelvic stability", "Balance"], tutorialUrl: "" },
   { id: "shoulderTap", name: "Tall Plank Shoulder Tap", instructions: "10 taps each side", views: "", lookingFor: ["Rotary stability", "Trunk stiffness", "Shoulder control"], tutorialUrl: "" },
   { id: "copenhagenPlank", name: "Copenhagen Side Plank", instructions: "20-second hold each side", views: "", lookingFor: ["Adductor strength", "Pelvic stability", "Groin injury risk"], tutorialUrl: "" },
-  { id: "lateralBound", name: "Lateral Bound Stick", instructions: "3 each side", views: "", lookingFor: ["Landing mechanics", "Frontal plane control", "Deceleration ability"], tutorialUrl: "" },
+  { id: "lateralBound", name: "Lateral Bound Stick", instructions: "3 each side", views: "", lookingFor: ["Frontal plane lateral landing mechanics", "Braking / deceleration ability", "Frontal plane control"], tutorialUrl: "" },
   { id: "singleLegHop", name: "Single Leg Hop & Stick", instructions: "3 each side", views: "", lookingFor: ["Force absorption", "Ankle stiffness", "Knee control"], tutorialUrl: "" },
   { id: "overheadReach", name: "Overhead Reach", instructions: "Simple standing overhead reach", views: "", lookingFor: ["Shoulder mobility", "Thoracic extension", "Rib flare"], tutorialUrl: "" },
 ];
@@ -544,7 +544,10 @@ const ATHLETE_CATEGORIES = [
 // videos — there's no automated video scoring here, this is a structured
 // way to record the coach's own read of the tape, using an FMS-style 0-3
 // scale rather than a free 0-100 number.
-const SCORECARD_CATEGORIES = ["Ankle Mobility", "Hip Mobility", "Thoracic Extension", "Trunk Control", "Balance", "Knee Control", "Shoulder Control", "Landing Mechanics"];
+// Movement Quality Scorecard categories for the Coach Tools report — one
+// per Phase 2 movement assessment pattern (12 total), scored FMS-style
+// 0-3 each, for a total out of 36.
+const SCORECARD_CATEGORIES = MOVEMENTS.map((m) => m.name);
 
 const FMS_SCORES = [
   { score: 3, label: "3 — Optimal", color: "#2D6FE0", desc: "Performs the movement correctly without any compensations." },
