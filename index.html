@@ -690,6 +690,9 @@ function App() {
   const coachSuggestedSummary = convergeSummary(coachEsdInterp, coachFV);
   const finalPriority = priorityOverride || (coachSuggestedSummary && coachSuggestedSummary.priority) || "";
   const combinedProfile = buildCombinedProfile(coachEsdInterp, coachFV);
+  const scorecardEntries = SCORECARD_CATEGORIES.filter((c) => scorecard[c] !== undefined && scorecard[c] !== "");
+  const scorecardTotal = scorecardEntries.reduce((sum, c) => sum + Number(scorecard[c]), 0);
+  const scorecardMax = SCORECARD_CATEGORIES.length * 3;
 
   const setTest = (key, value) => setTestResults({ ...testResults, [key]: value });
 
@@ -1481,7 +1484,14 @@ function App() {
             {coachData && (
               <>
                 <div className="card" style={{ marginBottom: 20 }}>
-                  <div style={{ fontSize: 12, letterSpacing: 1, color: "#D8342A", textTransform: "uppercase", marginBottom: 12 }}>2. Movement Quality Scorecard (FMS-style)</div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
+                    <div style={{ fontSize: 12, letterSpacing: 1, color: "#D8342A", textTransform: "uppercase" }}>2. Movement Quality Scorecard (FMS-style)</div>
+                    {scorecardEntries.length > 0 && (
+                      <div style={{ fontSize: 13, color: "#E8ECEE" }}>
+                        Total: <strong>{scorecardTotal}</strong> / {scorecardMax}
+                      </div>
+                    )}
+                  </div>
                   <p style={{ color: "#5C6469", fontSize: 12, marginBottom: 12 }}>
                     Score each category after reviewing this athlete's Phase 2 videos ({coachData.videoMovementIds.length} of {MOVEMENTS.length} movements uploaded).
                   </p>
@@ -1582,7 +1592,17 @@ function App() {
                 </div>
 
                 <div style={{ padding: 24 }}>
-                  <div style={{ fontSize: 12, color: "#2D6FE0", fontWeight: 700, letterSpacing: 1, marginBottom: 10 }}>MOVEMENT QUALITY SCORECARD (FMS-STYLE, 0–3)</div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
+                    <div style={{ fontSize: 12, color: "#2D6FE0", fontWeight: 700, letterSpacing: 1 }}>MOVEMENT QUALITY SCORECARD (FMS-STYLE, 0–3)</div>
+                    {scorecardEntries.length > 0 && (
+                      <div style={{ fontSize: 14, color: "#14181B" }}>
+                        Total: <strong>{scorecardTotal}</strong> / {scorecardMax}
+                        {scorecardEntries.length < SCORECARD_CATEGORIES.length && (
+                          <span style={{ fontSize: 11, color: "#888" }}> ({scorecardEntries.length}/{SCORECARD_CATEGORIES.length} scored)</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
                   <div style={{ marginBottom: 24 }}>
                     {SCORECARD_CATEGORIES.filter((c) => scorecard[c] !== undefined && scorecard[c] !== "").map((cat) => {
                       const scoreInfo = FMS_SCORES.find((s) => String(s.score) === scorecard[cat]);
