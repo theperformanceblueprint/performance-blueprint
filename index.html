@@ -517,10 +517,18 @@ function buildCombinedProfile(esdInterp, fv) {
     (esdInterp.tier === "low" && fv.tier === "velocity") ||
     (esdInterp.tier === "high" && fv.tier === "force") ||
     (esdInterp.tier === "mid" && fv.tier === "balanced");
-  const summary = `Sprint F-V suggests ${sprintLabel.toLowerCase()} emphasis; ESD suggests a ${esdLabel.toLowerCase()} priority. ${
+  // Athlete archetype — Piston (high elastic use + force-dominant/strength-biased
+  // sprint), Spring (high elastic use + speed-dominant/force-deficit sprint), or
+  // Mix (everything else — moderate/balanced combinations).
+  // Piston = strong but slow (force-dominant sprint + low elastic use).
+  // Spring = fast but weak (force-deficit sprint + high elastic use).
+  // Mix/Balanced = everything else, including the "strong & fast" case
+  // where both force and elastic qualities are already good.
+  const archetype = esdInterp.tier === "low" && fv.tier === "force" ? "Piston" : esdInterp.tier === "high" && fv.tier === "velocity" ? "Spring" : "Mix";
+  const summary = `Sprint F-V suggests ${sprintLabel.toLowerCase()} emphasis; ESD suggests a ${esdLabel.toLowerCase()} priority — overall archetype: ${archetype}. ${
     aligned ? "Signals align — proceed with confidence on the shared emphasis." : "Signals diverge — run a concurrent block addressing both and re-test to determine the primary need."
   }`;
-  return { sprintLabel, esdLabel, aligned, summary, sprintPriorities, esdPriorities };
+  return { sprintLabel, esdLabel, aligned, archetype, summary, sprintPriorities, esdPriorities };
 }
 
 const ADDITIONAL_TESTS = [
@@ -635,12 +643,20 @@ function App() {
     if (params.get("checkout") === "success") {
       const email = savedEmail || params.get("email");
       const plan = params.get("plan");
+      const wasAwaitingPayment = window.sessionStorage && window.sessionStorage.getItem("pb_intake_awaiting_payment") === "1";
       if (email) {
         setCheckoutStatus("checking");
         // Stripe's webhook may take a couple seconds to land before the DB updates
         setTimeout(() => {
           checkSubscriptionStatus(email).then((sub) => {
-            if (sub && sub.status === "active") { setSubscribed(sub.plan || plan); }
+            if (sub && sub.status === "active") {
+              setSubscribed(sub.plan || plan);
+              if (wasAwaitingPayment && (sub.plan || plan) === "programming") {
+                setIntakePhase(4);
+                setScreen("onboard");
+                if (window.sessionStorage) window.sessionStorage.removeItem("pb_intake_awaiting_payment");
+              }
+            }
             setCheckoutStatus("");
           });
         }, 2000);
@@ -1235,6 +1251,7 @@ function App() {
                       setIntakePhase(4);
                     } else {
                       setIntakeAwaitingPayment(true);
+                      if (window.sessionStorage) window.sessionStorage.setItem("pb_intake_awaiting_payment", "1");
                       setPaymentPlan("programming");
                     }
                   }}
@@ -1610,12 +1627,12 @@ function App() {
                     {SCORECARD_CATEGORIES.filter((c) => scorecard[c] !== undefined && scorecard[c] !== "").map((cat) => {
                       const scoreInfo = FMS_SCORES.find((s) => String(s.score) === scorecard[cat]);
                       return (
-                        <div key={cat} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-                          <div style={{ width: 130, fontSize: 12 }}>{cat}</div>
-                          <div style={{ flex: 1, background: "#EEE", height: 10 }}>
-                            <div style={{ width: `${(Number(scorecard[cat]) / 3) * 100}%`, background: scoreInfo ? scoreInfo.color : "#2D6FE0", height: 10 }} />
+                        <div key={cat} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                          <div style={{ width: 190, fontSize: 10, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{cat}</div>
+                          <div style={{ flex: 1, background: "#EEE", height: 8 }}>
+                            <div style={{ width: `${(Number(scorecard[cat]) / 3) * 100}%`, background: scoreInfo ? scoreInfo.color : "#2D6FE0", height: 8 }} />
                           </div>
-                          <div style={{ width: 40, fontSize: 12, textAlign: "right" }}>{scorecard[cat]}/3</div>
+                          <div style={{ width: 26, fontSize: 10, textAlign: "right" }}>{scorecard[cat]}/3</div>
                         </div>
                       );
                     })}
@@ -1668,15 +1685,15 @@ function App() {
 
                   <div style={{ background: "#1B2A45", padding: 16, marginBottom: combinedProfile ? 24 : 0 }}>
                     <div style={{ fontSize: 12, color: "#8FA8D9", fontWeight: 700, letterSpacing: 1, marginBottom: 6 }}>TRAINING PRIORITY</div>
-                    <div style={{ fontSize: 16, color: "#14181B", fontWeight: 700 }}>{finalPriority || "Not yet determined"}</div>
+                    <div style={{ fontSize: 16, color: "#FFFFFF", fontWeight: 700 }}>{finalPriority || "Not yet determined"}</div>
                   </div>
 
                   {combinedProfile && (
                     <div style={{ background: "#DCE9F9", border: "1px solid #B8D2ED", padding: 16 }}>
                       <div style={{ fontSize: 13, color: "#1B3A5C", fontWeight: 700, marginBottom: 10 }}>⊙ COMBINED ATHLETIC PROFILE — SPRINT F-V + ESD</div>
                       <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-                        <span style={{ background: "#FBE0DC", color: "#B02A20", fontSize: 12, fontWeight: 700, padding: "6px 12px" }}>Sprint: {combinedProfile.sprintLabel}</span>
-                        <span style={{ background: "#DCE9F9", border: "1px solid #B8D2ED", color: "#1B3A5C", fontSize: 12, fontWeight: 700, padding: "6px 12px" }}>ESD: {combinedProfile.esdLabel}</span>
+                        <span style={{ background: "#FBE0DC", color: "#B02A20", fontSize: 12, fontWeight: 700, padding: "6px 12px" }}>Sprint: {combinedProfile.sprintLabel} ({combinedProfile.archetype})</span>
+                        <span style={{ background: "#DCE9F9", border: "1px solid #B8D2ED", color: "#1B3A5C", fontSize: 12, fontWeight: 700, padding: "6px 12px" }}>ESD: {combinedProfile.esdLabel} ({combinedProfile.archetype})</span>
                         <span style={{ background: "#fff", border: "1px solid #D5D9DB", color: "#333", fontSize: 12, fontWeight: 700, padding: "6px 12px" }}>
                           {combinedProfile.aligned ? "Aligned signals" : "Mixed signals"}
                         </span>
@@ -1770,25 +1787,6 @@ function App() {
                 )}
               </div>
             )}
-
-            <div style={{ borderTop: "1px solid #23282C", marginTop: 18, paddingTop: 14 }}>
-              <button
-                onClick={() => {
-                  setSubscribed(paymentPlan);
-                  setPaymentPlan(null);
-                  if (intakeAwaitingPayment && paymentPlan === "programming") {
-                    setIntakePhase(4);
-                    setIntakeAwaitingPayment(false);
-                  }
-                }}
-                style={{ width: "100%", background: "transparent", border: "1px solid #2C3236", color: "#8A9198", padding: "10px", fontSize: 12, cursor: "pointer" }}
-              >
-                Simulate successful payment (demo only)
-              </button>
-              <p style={{ color: "#5C6469", fontSize: 11, marginTop: 10, marginBottom: 0, textAlign: "center" }}>
-                {backendReady ? "Simulate skips real Stripe checkout — for testing only." : "Real checkout requires the backend to be configured — see SETUP-GUIDE.md."}
-              </p>
-            </div>
           </div>
         </div>
       )}
@@ -1800,6 +1798,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(<App />);
 </script>
 </body>
 </html>
+
 
 
 
