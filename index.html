@@ -512,10 +512,104 @@ function convergeSummary(esdInterp, fv) {
 // similar force-plate test we don't collect here. Same spirit — converge
 // two independent signals and flag where they agree or conflict — just
 // built from the data this platform actually has.
+// ── Athlete Profiling Classification System (rebuilt per review) ─────
+//
+// Two-axis model: Sprint F-V profile (where the sprint bottleneck sits on
+// the force <-> velocity spectrum) crossed with ESD (standing in for iso
+// belt-squat DSI, which this platform doesn't measure — ESD answers a
+// related but different question: of the force this athlete has, how
+// much of it are they expressing rapidly/ballistically).
+//
+// Four named archetypes, plus two "doesn't cleanly fit one archetype"
+// hybrid corners — matching the source model exactly rather than forcing
+// every combination into one of four boxes:
+//   Piston  = force-oriented sprint + LOW ESD  (strong but slow)
+//   Spring  = velocity-oriented sprint + HIGH ESD  (fast but weak)
+//   Rocket  = balanced sprint + HIGH output magnitude  (strong & fast)
+//   Builder = balanced sprint + LOW/MODERATE output magnitude  (needs
+//             broad development — a balanced profile is NOT enough on
+//             its own to earn "Rocket"; it also has to be high-output)
+//   Hybrid  = force-oriented + higher ESD, or velocity-oriented + lower
+//             ESD — real combinations the source model calls out as not
+//             matching one clean archetype.
+//
+// IMPORTANT: these bands (ESD tiers, sprint F-V tiers, and the magnitude
+// thresholds below) are initial practical starting points, not validated
+// diagnostic cutoffs — they should be calibrated against your own athlete
+// population over time, exactly as the source review recommends.
+
+function classifySprintMagnitude(fv) {
+  // Rough output-magnitude read from whatever we have: estimated peak
+  // sprint velocity always, plus estimated peak power per kg if
+  // bodyweight was provided. This exists specifically so "balanced" sprint
+  // profiles get split into Rocket (high output) vs. Builder (low/moderate
+  // output) instead of being treated as one bucket — a balanced-but-slow
+  // profile and a balanced-but-fast profile need very different programming.
+  let velScore = fv.vEst >= 8.3 ? 2 : fv.vEst >= 7.3 ? 1 : 0;
+  let score = velScore;
+  if (fv.force) {
+    const powScore = fv.force.PmaxPerKg >= 11 ? 2 : fv.force.PmaxPerKg >= 8 ? 1 : 0;
+    score = (velScore + powScore) / 2;
+  }
+  if (score >= 1.5) return "high";
+  if (score >= 0.75) return "moderate";
+  return "low";
+}
+
+function classifyArchetype(esdInterp, fv) {
+  if (!esdInterp || !fv) return null;
+  const magnitude = classifySprintMagnitude(fv);
+
+  if (fv.tier === "force" && esdInterp.tier === "low") {
+    return {
+      key: "piston", name: "The Piston", tagline: "Strong but slow", clean: true,
+      interpretation: "Lots of force capacity, but doesn't express it rapidly enough.",
+      theme: "Make the engine rev — maintain maximal strength while emphasizing high-velocity force production, sprint exposure, ballistic work, and high-speed qualities.",
+    };
+  }
+  if (fv.tier === "velocity" && esdInterp.tier === "high") {
+    return {
+      key: "spring", name: "The Spring", tagline: "Fast but weak", clean: true,
+      interpretation: "Expresses the force they have well, but doesn't have enough force capacity.",
+      theme: "Build the engine — increase maximal force while maintaining the athlete's existing velocity qualities.",
+    };
+  }
+  if (fv.tier === "balanced" && magnitude === "high") {
+    return {
+      key: "rocket", name: "The Rocket", tagline: "High-performing balanced", clean: true,
+      interpretation: "Has force capacity and can express it rapidly — strong and fast with no single obvious bottleneck.",
+      theme: "Raise the whole ceiling — continue developing force and velocity qualities together; avoid unnecessary specialization that creates a new imbalance.",
+    };
+  }
+  if (fv.tier === "balanced") {
+    return {
+      key: "builder", name: "The Builder", tagline: "Balanced but underdeveloped", clean: true,
+      interpretation: "No major force/velocity imbalance — but that's because both ends need development, not because both are already strong.",
+      theme: "Build everything — develop maximal force, explosive force, sprint exposure, and general athletic power before worrying about fine F-V optimization.",
+    };
+  }
+  if (fv.tier === "force") {
+    return {
+      key: "hybrid-force", name: "Mixed Profile", tagline: "Force-oriented, higher ESD", clean: false,
+      interpretation: "Strong athlete whose force-oriented sprint profile doesn't fully match the low-ESD pattern typical of a Piston — worth reviewing individually rather than assuming one archetype.",
+      theme: "Emphasize high-velocity sprint exposure while keeping an eye on whether force expression holds up as intensity rises.",
+    };
+  }
+  return {
+    key: "hybrid-velocity", name: "Mixed Profile", tagline: "Velocity-oriented, lower ESD", clean: false,
+    interpretation: "Velocity-oriented sprint profile without the high-ESD pattern typical of a Spring — suggests both force-capacity and rapid-expression limitations together.",
+    theme: "Address both maximal force development and reactive/ballistic training — this profile doesn't have one single clean lever to pull.",
+  };
+}
+
 function buildCombinedProfile(esdInterp, fv) {
   if (!esdInterp || !fv) return null;
-  const sprintLabel = { velocity: "Force-Deficit", balanced: "Balanced", force: "Speed-Deficit" }[fv.tier];
-  const esdLabel = { low: "Low (Poor Elastic Use)", mid: "Balanced", high: "High (Strong Elastic Use)" }[esdInterp.tier];
+  const sprintLabel = { velocity: "Velocity-Oriented", balanced: "Balanced", force: "Force-Oriented" }[fv.tier];
+  const esdLabel = { low: "Low", mid: "Moderate", high: "High" }[esdInterp.tier];
+  const magnitude = classifySprintMagnitude(fv);
+  const magnitudeLabel = { high: "High output", moderate: "Moderate output", low: "Low output" }[magnitude];
+  const archetype = classifyArchetype(esdInterp, fv);
+
   const sprintPriorities = {
     velocity: ["Heavy sled pushing (>70% BW)", "Hip-dominant strength — trap bar deadlift, RDL", "Resisted sprints (10–20% BW)", "Nordic hamstring curls — eccentric emphasis"],
     balanced: ["Continue concurrent force and velocity development", "Maintain even acceleration and top-end speed exposure"],
@@ -526,22 +620,12 @@ function buildCombinedProfile(esdInterp, fv) {
     mid: ["Continue balanced plyometric and strength work", "Monitor with periodic re-testing", "No single elastic-quality bias to correct"],
     high: ["Maintain current plyometric/elastic work", "Compare against absolute strength markers before adding max-strength emphasis", "Consider maximal strength work only if underlying force capacity is limited"],
   }[esdInterp.tier];
-  const aligned =
-    (esdInterp.tier === "low" && fv.tier === "velocity") ||
-    (esdInterp.tier === "high" && fv.tier === "force") ||
-    (esdInterp.tier === "mid" && fv.tier === "balanced");
-  // Athlete archetype — Piston (high elastic use + force-dominant/strength-biased
-  // sprint), Spring (high elastic use + speed-dominant/force-deficit sprint), or
-  // Mix (everything else — moderate/balanced combinations).
-  // Piston = strong but slow (force-dominant sprint + low elastic use).
-  // Spring = fast but weak (force-deficit sprint + high elastic use).
-  // Mix/Balanced = everything else, including the "strong & fast" case
-  // where both force and elastic qualities are already good.
-  const archetype = esdInterp.tier === "low" && fv.tier === "force" ? "Piston" : esdInterp.tier === "high" && fv.tier === "velocity" ? "Spring" : "Mix";
-  const summary = `Sprint F-V suggests ${sprintLabel.toLowerCase()} emphasis; ESD suggests a ${esdLabel.toLowerCase()} priority — overall archetype: ${archetype}. ${
-    aligned ? "Signals align — proceed with confidence on the shared emphasis." : "Signals diverge — run a concurrent block addressing both and re-test to determine the primary need."
+
+  const summary = `Sprint F-V is ${sprintLabel.toLowerCase()} (${magnitudeLabel.toLowerCase()}); ESD is ${esdLabel.toLowerCase()}. ${
+    archetype.clean ? `This is a clean match for ${archetype.name} (${archetype.tagline}).` : `${archetype.tagline} — this doesn't cleanly match one of the four named archetypes; review individually.`
   }`;
-  return { sprintLabel, esdLabel, aligned, archetype, summary, sprintPriorities, esdPriorities };
+
+  return { sprintLabel, esdLabel, magnitude, magnitudeLabel, archetype, aligned: archetype.clean, summary, sprintPriorities, esdPriorities };
 }
 
 const ADDITIONAL_TESTS = [
@@ -1705,18 +1789,30 @@ function App() {
 
                   {combinedProfile && (
                     <div style={{ background: "#DCE9F9", border: "1px solid #B8D2ED", padding: 16 }}>
-                      <div style={{ fontSize: 13, color: "#1B3A5C", fontWeight: 700, marginBottom: 10 }}>⊙ COMBINED ATHLETIC PROFILE — SPRINT F-V + ESD</div>
+                      <div style={{ fontSize: 13, color: "#1B3A5C", fontWeight: 700, marginBottom: 2 }}>⊙ COMBINED ATHLETIC PROFILE — SPRINT F-V + ESD</div>
+                      <div style={{ fontSize: 10, color: "#4A5A70", marginBottom: 10 }}>
+                        ESD is used here as a practical substitute for iso belt-squat DSI, which this platform doesn't measure directly.
+                      </div>
+
+                      <div style={{ background: "#fff", border: `1px solid ${combinedProfile.archetype.clean ? "#1B3A5C" : "#D5D9DB"}`, padding: 12, marginBottom: 12 }}>
+                        <div style={{ fontSize: 16, fontWeight: 700, color: "#1B3A5C" }}>{combinedProfile.archetype.name}</div>
+                        <div style={{ fontSize: 11, color: "#555", fontStyle: "italic", marginBottom: 6 }}>{combinedProfile.archetype.tagline}</div>
+                        <div style={{ fontSize: 12, color: "#222", marginBottom: 6 }}>{combinedProfile.archetype.interpretation}</div>
+                        <div style={{ fontSize: 12, color: "#1B3A5C", fontWeight: 600 }}>Development theme: <span style={{ fontWeight: 400, color: "#222" }}>{combinedProfile.archetype.theme}</span></div>
+                      </div>
+
                       <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-                        <span style={{ background: "#FBE0DC", color: "#B02A20", fontSize: 12, fontWeight: 700, padding: "6px 12px" }}>Sprint: {combinedProfile.sprintLabel} ({combinedProfile.archetype})</span>
-                        <span style={{ background: "#DCE9F9", border: "1px solid #B8D2ED", color: "#1B3A5C", fontSize: 12, fontWeight: 700, padding: "6px 12px" }}>ESD: {combinedProfile.esdLabel} ({combinedProfile.archetype})</span>
+                        <span style={{ background: "#FBE0DC", color: "#B02A20", fontSize: 12, fontWeight: 700, padding: "6px 12px" }}>Sprint F-V: {combinedProfile.sprintLabel}</span>
+                        <span style={{ background: "#DCE9F9", border: "1px solid #B8D2ED", color: "#1B3A5C", fontSize: 12, fontWeight: 700, padding: "6px 12px" }}>ESD: {combinedProfile.esdLabel}</span>
+                        <span style={{ background: "#E8F3E3", border: "1px solid #C3E0B4", color: "#3A6B1F", fontSize: 12, fontWeight: 700, padding: "6px 12px" }}>{combinedProfile.magnitudeLabel}</span>
                         <span style={{ background: "#fff", border: "1px solid #D5D9DB", color: "#333", fontSize: 12, fontWeight: 700, padding: "6px 12px" }}>
-                          {combinedProfile.aligned ? "Aligned signals" : "Mixed signals"}
+                          {combinedProfile.archetype.clean ? "Clean archetype match" : "Mixed / hybrid profile"}
                         </span>
                       </div>
                       <div style={{ background: "#fff", padding: 12, marginBottom: 12, fontSize: 13, color: "#222", lineHeight: 1.5 }}>
                         {combinedProfile.summary}
                       </div>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
                         <div style={{ background: "#FBE9E7", padding: 12 }}>
                           <div style={{ fontSize: 12, color: "#B02A20", fontWeight: 700, marginBottom: 6 }}>Sprint F-V priorities</div>
                           <ol style={{ margin: 0, paddingLeft: 16, fontSize: 12, color: "#333", lineHeight: 1.7 }}>
@@ -1729,6 +1825,10 @@ function App() {
                             {combinedProfile.esdPriorities.map((p) => <li key={p}>{p}</li>)}
                           </ol>
                         </div>
+                      </div>
+                      <div style={{ fontSize: 10, color: "#4A5A70", lineHeight: 1.5 }}>
+                        These bands (ESD tiers, sprint F-V tiers, and output-magnitude thresholds) are initial practical
+                        starting points, not validated diagnostic cutoffs — calibrate against your own athlete population over time.
                       </div>
                     </div>
                   )}
