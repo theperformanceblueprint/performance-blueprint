@@ -111,6 +111,19 @@ async function fetchResources() {
   }
 }
 
+async function notifyIntakeComplete(email) {
+  if (!EDGE_FUNCTIONS_URL) return;
+  try {
+    await fetch(`${EDGE_FUNCTIONS_URL}/notify-intake-complete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+      body: JSON.stringify({ email }),
+    });
+  } catch (err) {
+    console.error("notifyIntakeComplete failed:", err); // never block the athlete's flow over this
+  }
+}
+
 async function getResourceUrl(resourceId, email) {
   if (!EDGE_FUNCTIONS_URL) return { error: "Backend not configured" };
   try {
@@ -655,6 +668,7 @@ function App() {
                 setIntakePhase(4);
                 setScreen("onboard");
                 if (window.sessionStorage) window.sessionStorage.removeItem("pb_intake_awaiting_payment");
+                notifyIntakeComplete(email);
               }
             }
             setCheckoutStatus("");
@@ -1249,6 +1263,7 @@ function App() {
                     if (athleteId) await saveTestResultsToDb(athleteId, testResults);
                     if (subscribed === "programming") {
                       setIntakePhase(4);
+                      notifyIntakeComplete(profile.email);
                     } else {
                       setIntakeAwaitingPayment(true);
                       if (window.sessionStorage) window.sessionStorage.setItem("pb_intake_awaiting_payment", "1");
