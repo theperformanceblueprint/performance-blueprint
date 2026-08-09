@@ -3,6 +3,17 @@
 <head>
 <meta charset="UTF-8">
 <title>The Human Performance Blueprint</title>
+
+<!-- Google Analytics (GA4) -->
+<!-- Replace G-XXXXXXXXXX below with your real Measurement ID from analytics.google.com -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-XXXXXXXXXX');
+</script>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
@@ -121,6 +132,102 @@ async function notifyIntakeComplete(email) {
     });
   } catch (err) {
     console.error("notifyIntakeComplete failed:", err); // never block the athlete's flow over this
+  }
+}
+
+// Checks whether an email has access to video review coaching — either an
+// unfulfilled one-time order (Single Video Review) or an active recurring
+// subscription (Monthly Video Coaching).
+async function checkVideoCoachingAccess(email) {
+  if (!supabaseClient || !email) return { hasAccess: false };
+  try {
+    const { data: athlete } = await supabaseClient.from("athletes").select("id").eq("email", email).maybeSingle();
+    if (!athlete) return { hasAccess: false };
+
+    const { data: sub } = await supabaseClient
+      .from("subscriptions").select("plan, status").eq("athlete_id", athlete.id).maybeSingle();
+    if (sub && sub.status === "active" && sub.plan === "videoCoachingMonthly") {
+      return { hasAccess: true, athleteId: athlete.id, product: "videoCoachingMonthly" };
+    }
+
+    const { data: orders } = await supabaseClient
+      .from("orders").select("id, product, fulfilled").eq("athlete_id", athlete.id).eq("product", "videoReviewSingle").eq("fulfilled", false).limit(1);
+    if (orders && orders.length > 0) {
+      return { hasAccess: true, athleteId: athlete.id, product: "videoReviewSingle" };
+    }
+
+    return { hasAccess: false };
+  } catch (err) {
+    console.error("checkVideoCoachingAccess failed:", err);
+    return { hasAccess: false };
+  }
+}
+
+async function uploadVideoSubmission(athleteId, product, file, note) {
+  if (!supabaseClient || !athleteId) return { error: "Backend not configured." };
+  try {
+    const path = `${athleteId}/${Date.now()}-${file.name}`;
+    const { error: uploadError } = await supabaseClient.storage.from("video-submissions").upload(path, file);
+    if (uploadError) return { error: String(uploadError.message || uploadError) };
+    const { error: insertError } = await supabaseClient.from("video_submissions").insert({
+      athlete_id: athleteId, product, storage_path: path, note: note || null,
+    });
+    if (insertError) return { error: String(insertError.message || insertError) };
+    return { ok: true };
+  } catch (err) {
+    return { error: String(err) };
+  }
+}
+
+async function fetchMySubmissions(athleteId) {
+  if (!supabaseClient || !athleteId) return [];
+  try {
+    const { data } = await supabaseClient
+      .from("video_submissions").select("*").eq("athlete_id", athleteId).order("submitted_at", { ascending: false });
+    return data || [];
+  } catch (err) {
+    console.error("fetchMySubmissions failed:", err);
+    return [];
+  }
+}
+
+async function fetchAllSubmissions() {
+  if (!supabaseClient) return [];
+  try {
+    const { data } = await supabaseClient
+      .from("video_submissions").select("*, athletes(email)").order("submitted_at", { ascending: false });
+    return data || [];
+  } catch (err) {
+    console.error("fetchAllSubmissions failed:", err);
+    return [];
+  }
+}
+
+async function getSubmissionUrl(submissionId) {
+  if (!EDGE_FUNCTIONS_URL) return { error: "Backend not configured." };
+  try {
+    const res = await fetch(`${EDGE_FUNCTIONS_URL}/get-submission-url`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+      body: JSON.stringify({ submissionId }),
+    });
+    return await res.json();
+  } catch (err) {
+    return { error: String(err) };
+  }
+}
+
+async function submitVideoFeedback(submissionId, feedbackText, feedbackVideoUrl) {
+  if (!EDGE_FUNCTIONS_URL) return { error: "Backend not configured." };
+  try {
+    const res = await fetch(`${EDGE_FUNCTIONS_URL}/submit-video-feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+      body: JSON.stringify({ submissionId, feedbackText, feedbackVideoUrl }),
+    });
+    return await res.json();
+  } catch (err) {
+    return { error: String(err) };
   }
 }
 
@@ -673,6 +780,10 @@ const PLANS = {
   monthly: { label: "Resources · Monthly", price: "$5.99/mo", stripeUrl: "" },
   yearly: { label: "Resources · Yearly", price: "$49.99/yr", stripeUrl: "" },
   programming: { label: "Online Programming", price: "$29.99/mo", stripeUrl: "" },
+  videoReviewSingle: { label: "Single Video Review", price: "$89 one-time", stripeUrl: "" },
+  videoCoachingMonthly: { label: "Monthly Video Coaching", price: "$149/mo", stripeUrl: "" },
+  premiumAssessment: { label: "Premium Assessment", price: "$149 one-time", stripeUrl: "" },
+  premiumQuarterly: { label: "Premium + Quarterly Retest", price: "$89/quarter", stripeUrl: "" },
 };
 
 
@@ -707,6 +818,25 @@ function App() {
   const [coachPasswordInput, setCoachPasswordInput] = useState("");
   const [coachPasswordError, setCoachPasswordError] = useState("");
   const [coachPasswordChecking, setCoachPasswordChecking] = useState(false);
+
+  // --- Video Review Coaching (athlete side) ---
+  const [vcEmail, setVcEmail] = useState("");
+  const [vcAccess, setVcAccess] = useState(null); // null = not checked, {hasAccess,...} = checked
+  const [vcChecking, setVcChecking] = useState(false);
+  const [vcSubmissions, setVcSubmissions] = useState([]);
+  const [vcNote, setVcNote] = useState("");
+  const [vcUploading, setVcUploading] = useState(false);
+  const [vcError, setVcError] = useState("");
+
+  // --- Video Review Coaching (Coach Tools side) ---
+  const [vcAllSubmissions, setVcAllSubmissions] = useState(null);
+  const [vcReviewingId, setVcReviewingId] = useState(null);
+  const [vcWatchingId, setVcWatchingId] = useState(null);
+  const [vcFeedbackText, setVcFeedbackText] = useState("");
+  const [vcFeedbackVideoUrl, setVcFeedbackVideoUrl] = useState("");
+  const [vcSendingFeedback, setVcSendingFeedback] = useState(false);
+  const [vcPlayingUrl, setVcPlayingUrl] = useState(null);
+
 
   const submitCoachPassword = async () => {
     setCoachPasswordChecking(true);
@@ -799,6 +929,64 @@ function App() {
     setPriorityOverride("");
   };
 
+  const checkVcAccess = async () => {
+    if (!vcEmail) { setVcError("Enter your email first."); return; }
+    setVcChecking(true);
+    setVcError("");
+    const result = await checkVideoCoachingAccess(vcEmail);
+    setVcChecking(false);
+    setVcAccess(result);
+    if (result.hasAccess) {
+      const subs = await fetchMySubmissions(result.athleteId);
+      setVcSubmissions(subs);
+    } else {
+      setVcError("No active video coaching purchase found for that email. Choose a plan on the home page first.");
+    }
+  };
+
+  const submitVideo = async (file) => {
+    if (!file || !vcAccess?.athleteId) return;
+    setVcUploading(true);
+    setVcError("");
+    const result = await uploadVideoSubmission(vcAccess.athleteId, vcAccess.product, file, vcNote);
+    setVcUploading(false);
+    if (result.error) { setVcError(result.error); return; }
+    setVcNote("");
+    const subs = await fetchMySubmissions(vcAccess.athleteId);
+    setVcSubmissions(subs);
+  };
+
+  const loadAllSubmissions = async () => {
+    const subs = await fetchAllSubmissions();
+    setVcAllSubmissions(subs);
+  };
+
+  const watchSubmission = async (id) => {
+    setVcWatchingId(id);
+    setVcPlayingUrl("loading");
+    const result = await getSubmissionUrl(id);
+    setVcPlayingUrl(result.url || null);
+  };
+
+  const startReview = (sub) => {
+    setVcReviewingId(sub.id);
+    setVcFeedbackText(sub.feedback_text || "");
+    setVcFeedbackVideoUrl(sub.feedback_video_url || "");
+  };
+
+  const sendFeedback = async () => {
+    if (!vcFeedbackText.trim()) return;
+    setVcSendingFeedback(true);
+    const result = await submitVideoFeedback(vcReviewingId, vcFeedbackText.trim(), vcFeedbackVideoUrl.trim());
+    setVcSendingFeedback(false);
+    if (result.ok) {
+      setVcReviewingId(null);
+      setVcFeedbackText("");
+      setVcFeedbackVideoUrl("");
+      loadAllSubmissions();
+    }
+  };
+
   const coachAnswers = coachData?.answers || {};
   const coachTest = coachData?.testResults || {};
   const coachEsd = calcESD(coachTest.sj, coachTest.cmj);
@@ -857,7 +1045,7 @@ function App() {
         <img src={`data:image/png;base64,${LOGO_B64}`} alt="The Human Performance Blueprint" style={{ height: 300, maxWidth: "100%" }} />
       </div>
       <div style={{ display: "flex", gap: 4, justifyContent: "center", padding: "0 32px 18px" }}>
-        {["home", "onboard", "resources", "coach"].map((s) => (
+        {["home", "onboard", "resources", "videocoaching", "coach"].map((s) => (
           <button
             key={s}
             onClick={() => setScreen(s)}
@@ -872,7 +1060,7 @@ function App() {
               cursor: "pointer",
             }}
           >
-            {s === "home" ? "Home" : s === "onboard" ? "Intake" : s === "resources" ? "Resources" : "Coach Tools"}
+            {s === "home" ? "Home" : s === "onboard" ? "Intake" : s === "resources" ? "Resources" : s === "videocoaching" ? "Video Coaching" : "Coach Tools"}
           </button>
         ))}
       </div>
@@ -1020,6 +1208,56 @@ function App() {
                   <li>Personalized program</li>
                 </ul>
                 <button onClick={() => setPaymentPlan("programming")} style={{ width: "100%", background: "#2D6FE0", color: "#fff", border: "none", padding: "10px 16px", cursor: "pointer", fontSize: 13 }}>Choose plan</button>
+              </div>
+            </div>
+
+            <div style={{ fontSize: 12, letterSpacing: 1.5, color: "#8A9198", textTransform: "uppercase", margin: "40px 0 16px" }}>Additional Services</div>
+            <p style={{ color: "#5C6469", fontSize: 13, marginBottom: 20, maxWidth: 640 }}>
+              Coaching that doesn't depend on a live call — built for athletes (and a coach) who need flexibility, not a fixed weekly time slot.
+            </p>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 16 }}>
+              <div className="card">
+                <div style={{ fontSize: 12, color: "#8A9198", textTransform: "uppercase", letterSpacing: 1 }}>Single Video Review</div>
+                <div style={{ fontFamily: "Barlow Condensed, sans-serif", fontSize: 26, fontWeight: 700, margin: "6px 0" }}>$89</div>
+                <p style={{ color: "#5C6469", fontSize: 11, margin: "0 0 12px" }}>One-time</p>
+                <ul style={{ margin: 0, paddingLeft: 14, color: "#B2B8BC", fontSize: 12, lineHeight: 1.8, marginBottom: 14 }}>
+                  <li>Submit one movement/lift video</li>
+                  <li>Detailed written breakdown</li>
+                  <li>Turnaround within 48-72 hrs</li>
+                </ul>
+                <button onClick={() => setPaymentPlan("videoReviewSingle")} style={{ width: "100%", background: "transparent", color: "#E8ECEE", border: "1px solid #2C3236", padding: "9px 14px", cursor: "pointer", fontSize: 12 }}>Choose plan</button>
+              </div>
+              <div className="card" style={{ border: "1px solid #2D6FE0" }}>
+                <div style={{ fontSize: 12, color: "#2D6FE0", textTransform: "uppercase", letterSpacing: 1 }}>Monthly Video Coaching</div>
+                <div style={{ fontFamily: "Barlow Condensed, sans-serif", fontSize: 26, fontWeight: 700, margin: "6px 0" }}>$149<span style={{ fontSize: 12, color: "#8A9198" }}>/mo</span></div>
+                <p style={{ color: "#5C6469", fontSize: 11, margin: "0 0 12px" }}>Cancel anytime</p>
+                <ul style={{ margin: 0, paddingLeft: 14, color: "#B2B8BC", fontSize: 12, lineHeight: 1.8, marginBottom: 14 }}>
+                  <li>2-4 video submissions/month</li>
+                  <li>Written feedback each time</li>
+                  <li>Program adjustments based on what's seen</li>
+                </ul>
+                <button onClick={() => setPaymentPlan("videoCoachingMonthly")} style={{ width: "100%", background: "#2D6FE0", color: "#fff", border: "none", padding: "9px 14px", cursor: "pointer", fontSize: 12 }}>Choose plan</button>
+              </div>
+              <div className="card">
+                <div style={{ fontSize: 12, color: "#8A9198", textTransform: "uppercase", letterSpacing: 1 }}>Premium Assessment</div>
+                <div style={{ fontFamily: "Barlow Condensed, sans-serif", fontSize: 26, fontWeight: 700, margin: "6px 0" }}>$149</div>
+                <p style={{ color: "#5C6469", fontSize: 11, margin: "0 0 12px" }}>One-time · upgrades your report</p>
+                <ul style={{ margin: 0, paddingLeft: 14, color: "#B2B8BC", fontSize: 12, lineHeight: 1.8, marginBottom: 14 }}>
+                  <li>Everything in the standard report</li>
+                  <li>Recorded video walkthrough of your findings</li>
+                </ul>
+                <button onClick={() => setPaymentPlan("premiumAssessment")} style={{ width: "100%", background: "transparent", color: "#E8ECEE", border: "1px solid #2C3236", padding: "9px 14px", cursor: "pointer", fontSize: 12 }}>Choose plan</button>
+              </div>
+              <div className="card">
+                <div style={{ fontSize: 12, color: "#8A9198", textTransform: "uppercase", letterSpacing: 1 }}>Premium + Quarterly Retest</div>
+                <div style={{ fontFamily: "Barlow Condensed, sans-serif", fontSize: 26, fontWeight: 700, margin: "6px 0" }}>$89<span style={{ fontSize: 12, color: "#8A9198" }}>/quarter</span></div>
+                <p style={{ color: "#5C6469", fontSize: 11, margin: "0 0 12px" }}>~$320-400/yr · cancel anytime</p>
+                <ul style={{ margin: 0, paddingLeft: 14, color: "#B2B8BC", fontSize: 12, lineHeight: 1.8, marginBottom: 14 }}>
+                  <li>Premium Assessment, repeated</li>
+                  <li>Retested every 3 months</li>
+                  <li>Track progress across a training year</li>
+                </ul>
+                <button onClick={() => setPaymentPlan("premiumQuarterly")} style={{ width: "100%", background: "transparent", color: "#E8ECEE", border: "1px solid #2C3236", padding: "9px 14px", cursor: "pointer", fontSize: 12 }}>Choose plan</button>
               </div>
             </div>
 
@@ -1549,6 +1787,90 @@ function App() {
         </div>
       )}
 
+      {screen === "videocoaching" && (
+        <div style={{ maxWidth: 700, margin: "0 auto", padding: "48px 24px" }}>
+          <div style={{ fontSize: 12, color: "#8A9198", textTransform: "uppercase", letterSpacing: 1 }}>Video Review</div>
+          <h2 style={{ fontFamily: "Barlow Condensed, sans-serif", fontSize: 30, textTransform: "uppercase", margin: "2px 0 6px" }}>Video Coaching</h2>
+          <p style={{ color: "#5C6469", fontSize: 13, marginBottom: 20 }}>
+            For Single Video Review or Monthly Video Coaching purchasers — upload a video, and your coach will send back feedback within 48-72 hours.
+          </p>
+
+          {!vcAccess?.hasAccess ? (
+            <div className="card">
+              <div style={{ fontSize: 12, letterSpacing: 1, color: "#2D6FE0", textTransform: "uppercase", marginBottom: 12 }}>Verify your purchase</div>
+              <input
+                type="email"
+                placeholder="you@example.com"
+                value={vcEmail}
+                onChange={(e) => setVcEmail(e.target.value)}
+                style={{ marginBottom: 12 }}
+              />
+              <button onClick={checkVcAccess} disabled={vcChecking} style={{ background: "#2D6FE0", color: "#fff", border: "none", padding: "10px 20px", fontSize: 13, cursor: "pointer" }}>
+                {vcChecking ? "Checking..." : "Verify"}
+              </button>
+              {vcError && <p style={{ color: "#E4837B", fontSize: 12, marginTop: 10, marginBottom: 0 }}>{vcError}</p>}
+              <p style={{ color: "#5C6469", fontSize: 11, marginTop: 12, marginBottom: 0 }}>
+                Haven't purchased yet? <a href="#" onClick={(e) => { e.preventDefault(); setScreen("home"); }} style={{ color: "#2D6FE0" }}>See plans on the home page</a>.
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="card" style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 12, letterSpacing: 1, color: "#2D6FE0", textTransform: "uppercase", marginBottom: 12 }}>Submit a video</div>
+                <label style={{ fontSize: 12, color: "#8A9198" }}>Anything you want your coach to focus on? (optional)</label>
+                <textarea
+                  rows={2}
+                  value={vcNote}
+                  onChange={(e) => setVcNote(e.target.value)}
+                  placeholder="e.g. Focus on my squat depth and knee tracking"
+                  style={{ width: "100%", background: "#161A1D", border: "1px solid #2C3236", color: "#E8ECEE", padding: "10px 12px", fontSize: 14, boxSizing: "border-box", marginBottom: 12, fontFamily: "Inter, sans-serif" }}
+                />
+                <input
+                  type="file"
+                  accept="video/*"
+                  disabled={vcUploading}
+                  onChange={(e) => { if (e.target.files[0]) submitVideo(e.target.files[0]); e.target.value = ""; }}
+                />
+                {vcUploading && <p style={{ color: "#8A9198", fontSize: 12, marginTop: 8 }}>Uploading...</p>}
+                {vcError && <p style={{ color: "#E4837B", fontSize: 12, marginTop: 8, marginBottom: 0 }}>{vcError}</p>}
+              </div>
+
+              <div style={{ fontSize: 12, letterSpacing: 1, color: "#8A9198", textTransform: "uppercase", marginBottom: 12 }}>Your submissions</div>
+              {vcSubmissions.length === 0 ? (
+                <p style={{ color: "#5C6469", fontSize: 13 }}>No videos submitted yet.</p>
+              ) : (
+                <div style={{ display: "grid", gap: 12 }}>
+                  {vcSubmissions.map((sub) => (
+                    <div className="card" key={sub.id}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                        <span style={{ fontSize: 12, color: "#8A9198" }}>{new Date(sub.submitted_at).toLocaleDateString()}</span>
+                        <span style={{
+                          fontSize: 11, padding: "3px 10px", textTransform: "uppercase",
+                          color: sub.status === "reviewed" ? "#6EBF7A" : "#E8A33D",
+                          border: `1px solid ${sub.status === "reviewed" ? "#2A4A2E" : "#4A3A1E"}`,
+                        }}>{sub.status}</span>
+                      </div>
+                      {sub.note && <p style={{ color: "#B2B8BC", fontSize: 13, marginBottom: 8 }}>"{sub.note}"</p>}
+                      {sub.status === "reviewed" ? (
+                        <div style={{ background: "#161A1D", border: "1px solid #2C3236", padding: 12 }}>
+                          <div style={{ fontSize: 12, color: "#2D6FE0", marginBottom: 6 }}>Coach feedback</div>
+                          <p style={{ color: "#E8ECEE", fontSize: 14, whiteSpace: "pre-wrap", margin: 0 }}>{sub.feedback_text}</p>
+                          {sub.feedback_video_url && (
+                            <a href={sub.feedback_video_url} target="_blank" rel="noreferrer" style={{ color: "#2D6FE0", fontSize: 13, display: "inline-block", marginTop: 8 }}>Watch video response →</a>
+                          )}
+                        </div>
+                      ) : (
+                        <p style={{ color: "#5C6469", fontSize: 12, margin: 0 }}>Awaiting review.</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
       {screen === "coach" && (
         <div style={{ maxWidth: 900, margin: "0 auto", padding: "48px 24px" }}>
           {!coachUnlocked ? (
@@ -1582,6 +1904,80 @@ function App() {
             <p style={{ color: "#5C6469", fontSize: 12, marginBottom: 20 }}>
               Password-protected via a server-side check — the password itself is never stored in this page's code.
             </p>
+
+            <div className="card" style={{ marginBottom: 20 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <div style={{ fontSize: 12, letterSpacing: 1, color: "#D8342A", textTransform: "uppercase" }}>Video Review Queue</div>
+                <button onClick={loadAllSubmissions} style={{ background: "transparent", border: "1px solid #2C3236", color: "#8A9198", padding: "6px 12px", fontSize: 12, cursor: "pointer" }}>
+                  {vcAllSubmissions === null ? "Load submissions" : "Refresh"}
+                </button>
+              </div>
+              {vcAllSubmissions === null ? (
+                <p style={{ color: "#5C6469", fontSize: 13, margin: 0 }}>Click "Load submissions" to see pending video reviews.</p>
+              ) : vcAllSubmissions.length === 0 ? (
+                <p style={{ color: "#5C6469", fontSize: 13, margin: 0 }}>No video submissions yet.</p>
+              ) : (
+                <div style={{ display: "grid", gap: 10 }}>
+                  {vcAllSubmissions.map((sub) => (
+                    <div key={sub.id} style={{ background: "#161A1D", border: "1px solid #2C3236", padding: 14 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
+                        <div>
+                          <div style={{ fontSize: 13, color: "#E8ECEE" }}>{sub.athletes?.email || "Unknown athlete"}</div>
+                          <div style={{ fontSize: 11, color: "#5C6469" }}>{sub.product} · {new Date(sub.submitted_at).toLocaleString()}</div>
+                          {sub.note && <div style={{ fontSize: 12, color: "#B2B8BC", marginTop: 4, fontStyle: "italic" }}>"{sub.note}"</div>}
+                        </div>
+                        <span style={{
+                          fontSize: 11, padding: "3px 10px", textTransform: "uppercase", whiteSpace: "nowrap",
+                          color: sub.status === "reviewed" ? "#6EBF7A" : "#E8A33D",
+                          border: `1px solid ${sub.status === "reviewed" ? "#2A4A2E" : "#4A3A1E"}`,
+                        }}>{sub.status}</span>
+                      </div>
+                      <div style={{ display: "flex", gap: 8, marginBottom: vcReviewingId === sub.id ? 12 : 0 }}>
+                        <button onClick={() => watchSubmission(sub.id)} style={{ background: "transparent", border: "1px solid #2C3236", color: "#E8ECEE", padding: "6px 12px", fontSize: 12, cursor: "pointer" }}>Watch video</button>
+                        <button onClick={() => startReview(sub)} style={{ background: "#2D6FE0", color: "#fff", border: "none", padding: "6px 12px", fontSize: 12, cursor: "pointer" }}>
+                          {sub.status === "reviewed" ? "Edit feedback" : "Leave feedback"}
+                        </button>
+                      </div>
+
+                      {vcWatchingId === sub.id && vcPlayingUrl && (
+                        vcPlayingUrl === "loading" ? (
+                          <p style={{ fontSize: 12, color: "#8A9198" }}>Loading video...</p>
+                        ) : (
+                          <video src={vcPlayingUrl} controls style={{ width: "100%", maxHeight: 300, background: "#000", marginBottom: 12 }} />
+                        )
+                      )}
+
+                      {vcReviewingId === sub.id && (
+                        <div>
+                          <label style={{ fontSize: 12, color: "#8A9198" }}>Written feedback</label>
+                          <textarea
+                            rows={4}
+                            value={vcFeedbackText}
+                            onChange={(e) => setVcFeedbackText(e.target.value)}
+                            placeholder="What did you see? What should they work on?"
+                            style={{ width: "100%", background: "#0F1214", border: "1px solid #2C3236", color: "#E8ECEE", padding: "10px 12px", fontSize: 14, boxSizing: "border-box", marginBottom: 10, fontFamily: "Inter, sans-serif" }}
+                          />
+                          <label style={{ fontSize: 12, color: "#8A9198" }}>Video response link (optional)</label>
+                          <input
+                            type="text"
+                            placeholder="https://..."
+                            value={vcFeedbackVideoUrl}
+                            onChange={(e) => setVcFeedbackVideoUrl(e.target.value)}
+                            style={{ marginBottom: 10 }}
+                          />
+                          <div style={{ display: "flex", gap: 8 }}>
+                            <button onClick={sendFeedback} disabled={vcSendingFeedback || !vcFeedbackText.trim()} style={{ background: "#2D6FE0", color: "#fff", border: "none", padding: "8px 16px", fontSize: 12, cursor: "pointer" }}>
+                              {vcSendingFeedback ? "Sending..." : "Send feedback"}
+                            </button>
+                            <button onClick={() => { setVcReviewingId(null); setVcPlayingUrl(null); }} style={{ background: "transparent", border: "1px solid #2C3236", color: "#8A9198", padding: "8px 16px", fontSize: 12, cursor: "pointer" }}>Cancel</button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
 
             <div className="card" style={{ marginBottom: 20 }}>
               <div style={{ fontSize: 12, letterSpacing: 1, color: "#2D6FE0", textTransform: "uppercase", marginBottom: 12 }}>1. Look up athlete</div>
