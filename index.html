@@ -905,11 +905,20 @@ function App() {
     if (!email) { setResourceOpenError("Enter your email above first."); return; }
     setResourceOpenError("");
     setOpeningResourceId(resource.id);
+    // Open the tab immediately, synchronously within this click handler —
+    // if we wait until after the network request below to call
+    // window.open(), most browsers silently block it as a popup, since by
+    // then it's no longer directly tied to the user's click. Opening a
+    // blank tab now and redirecting it once we have the real URL keeps it
+    // from being blocked.
+    const newTab = window.open("", "_blank");
     const result = await getResourceUrl(resource.id, email);
     setOpeningResourceId(null);
     if (result && result.url) {
-      window.open(result.url, "_blank");
+      if (newTab) newTab.location.href = result.url;
+      else window.open(result.url, "_blank"); // fallback if the pre-open itself got blocked
     } else {
+      if (newTab) newTab.close();
       setResourceOpenError((result && result.error) || "Couldn't open this resource.");
     }
   };
@@ -2309,6 +2318,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(<App />);
 </script>
 </body>
 </html>
+
 
 
 
