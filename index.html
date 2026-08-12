@@ -594,6 +594,121 @@ function calcSprintFV(t10, t20, t30, t40, bodyweightLbs) {
 // (acceleration/speed quality) into one action step. This is a rule-based
 // synthesis, not a diagnostic algorithm — it's meant to give a starting
 // point for the coach's own read of the full profile, not a final answer.
+// Averages the two sides of the 5-10-5 shuttle for a single representative
+// time. If only one side was entered, falls back to that side alone (with
+// the UI flagging that both sides give a more representative number).
+function avgShuttleTime(left, right) {
+  const l = parseFloat(left), r = parseFloat(right);
+  const hasL = l > 0, hasR = r > 0;
+  if (hasL && hasR) return (l + r) / 2;
+  if (hasL) return l;
+  if (hasR) return r;
+  return null;
+}
+
+// Flags a meaningful left/right difference on the shuttle itself — this is
+// a separate, useful signal from COD Deficit: it doesn't tell you how much
+// speed is lost changing direction in general, it tells you whether one
+// side is notably worse than the other, which points toward a unilateral
+// mobility/stability/strength issue worth addressing directly (echoes the
+// same L/R asymmetry screening already built into the Phase 1 warmup).
+function interpretShuttleAsymmetry(left, right) {
+  const l = parseFloat(left), r = parseFloat(right);
+  if (!(l > 0) || !(r > 0)) return null;
+  const diff = Math.abs(l - r);
+  const slowerSide = l > r ? "Left" : l < r ? "Right" : null;
+  if (diff < 0.10) return { tier: "low", diff, slowerSide, label: "Minimal L/R difference" };
+  if (diff <= 0.20) return { tier: "moderate", diff, slowerSide, label: "Noticeable L/R difference" };
+  return { tier: "high", diff, slowerSide, label: "Significant L/R asymmetry" };
+}
+
+// ── Change of Direction (COD) Deficit ─────────────────────────────────
+// COD Deficit = COD test time − linear sprint time (over a comparable
+// distance). This platform uses the 5-10-5 Shuttle (already collected
+// under Additional Tests) against the 10-yard sprint time as a practical
+// proxy. It answers a question neither ESD nor Sprint F-V can: how much
+// speed does this athlete lose specifically in the redirection,
+// independent of how fast they are in general.
+//
+// IMPORTANT — this is NOT a distance-matched comparison. The 5-10-5
+// covers 20 total yards with two changes of direction; the 10-yard
+// sprint covers 10 yards in a straight line once. Published "COD
+// Deficit" figures in the literature are usually much smaller (often
+// well under a second) because they compare matched, single-turn
+// distances. Because these two tests aren't matched, the raw deficit
+// here will typically read in the 2.5-3.5s range for most athletes —
+// that's expected, not a bug. The bands below are set for THIS specific
+// pairing, not lifted from literature built on a different test.
+//
+// As with every other threshold in this system, these bands are initial
+// practical starting points, not validated cutoffs — calibrate to your
+// own athlete population over time.
+function calcCODDeficit(codTime, sprintTime) {
+  const c = parseFloat(codTime), s = parseFloat(sprintTime);
+  if (!c || !s || c <= 0 || s <= 0) return null;
+  return c - s;
+}
+function interpretCODDeficit(deficit) {
+  if (deficit === null || isNaN(deficit)) return null;
+  if (deficit < 2.6) {
+    return { tier: "low", label: "Low COD Deficit", detail: "Loses relatively little speed in the cut — change-of-direction ability doesn't look like the limiter here." };
+  }
+  if (deficit <= 3.2) {
+    return { tier: "moderate", label: "Moderate COD Deficit", detail: "A fairly typical amount of speed lost in the redirection — not a standout strength or a clear limiter on its own." };
+  }
+  return { tier: "high", label: "High COD Deficit", detail: "Loses a meaningful amount of speed changing direction relative to straight-line ability — braking and redirection mechanics are worth direct attention." };
+}
+
+// Averaging the two sides before computing the deficit can hide a real
+// per-side problem — e.g. a clean Low-tier right side and a High-tier left
+// side can average out to an unremarkable "Moderate" number, actively
+// masking exactly the kind of unilateral issue this test should surface.
+// This checks whether the two sides would actually classify into
+// different tiers if scored independently, so that gets flagged loudly
+// rather than smoothed over by the average.
+function codTierDisagreement(rightInterp, leftInterp) {
+  if (!rightInterp || !leftInterp || rightInterp.tier === leftInterp.tier) return null;
+  return {
+    rightTier: rightInterp.tier,
+    leftTier: leftInterp.tier,
+    text: `Right and left sides land in different tiers (Right: ${rightInterp.label}, Left: ${leftInterp.label}) — the averaged number below can mask this. Coach the specific side rather than relying on the average alone.`,
+  };
+}
+
+// Modifier language layered on top of the archetype, not a fifth
+// classification — mirrors the book's treatment exactly: COD Deficit
+// doesn't change which archetype an athlete is, it changes what gets
+// emphasized within that archetype's existing training theme.
+const COD_MODIFIERS = {
+  piston: {
+    high: "A high COD Deficit here is consistent with the rest of this profile — the same force-expression limiter showing up again in deceleration instead of acceleration. Braking mechanics and eccentric strength work belong in this program regardless; a high deficit just raises the priority.",
+    moderate: "A moderate COD Deficit doesn't change the core prescription — continue emphasizing rate of force expression, and keep an eye on this number as that work progresses.",
+    low: "A low COD Deficit is worth protecting here — this athlete may already redirect efficiently even though straight-line speed has a ceiling. Don't let general high-velocity work crowd out what's already working.",
+  },
+  spring: {
+    high: "A high COD Deficit despite good linear speed is a meaningful flag — the same small force reserve driving this profile is likely showing up as a limiter in braking specifically. Prioritize eccentric/braking-specific strength work, not just general maximal strength.",
+    moderate: "A moderate COD Deficit is fairly typical for this profile — continue the maximal-force emphasis already prescribed, and retest to see if it improves as a byproduct.",
+    low: "A low COD Deficit is a genuine strength on top of an already-efficient movement style — this athlete's elastic qualities are translating into redirection as well as straight-line speed.",
+  },
+  rocket: {
+    high: "Don't assume a Rocket is complete without checking this. A high COD Deficit means change-of-direction ability — which neither the F-V profile nor ESD is built to catch — is this athlete's actual remaining gap. Braking and redirection work earn a real place in the program.",
+    moderate: "A moderate COD Deficit is unremarkable for this profile — continue the concurrent force/velocity development already prescribed, with periodic retesting.",
+    low: "A low COD Deficit rounds out an already strong profile — force, velocity, and redirection all performing well together. Protect all three.",
+  },
+  builder: {
+    high: "COD Deficit gives this profile a specific early lever inside the broader 'needs everything' picture — a disproportionately high deficit means braking and deceleration work is a reasonable place to start, even while the rest of the program stays general.",
+    moderate: "A moderate COD Deficit doesn't change the prescription — broad, simultaneous development across force, power, and speed remains the priority.",
+    low: "A low COD Deficit is a genuine bright spot to build the rest of the profile around — this athlete already redirects efficiently relative to their current speed.",
+  },
+};
+function codModifierText(archetypeKey, codTier) {
+  if (!codTier) return null;
+  if (!COD_MODIFIERS[archetypeKey]) {
+    return "This profile doesn't cleanly match one archetype, so treat the COD Deficit as its own independent data point rather than assuming how it should modify training — review it alongside the rest of this athlete's testing individually.";
+  }
+  return COD_MODIFIERS[archetypeKey][codTier];
+}
+
 function convergeSummary(esdInterp, fv) {
   if (!esdInterp || !fv) return null;
   const key = `${esdInterp.tier}_${fv.tier}`;
@@ -709,7 +824,7 @@ function classifyArchetype(esdInterp, fv) {
   };
 }
 
-function buildCombinedProfile(esdInterp, fv) {
+function buildCombinedProfile(esdInterp, fv, codInterp) {
   if (!esdInterp || !fv) return null;
   const sprintLabel = { velocity: "Velocity-Oriented", balanced: "Balanced", force: "Force-Oriented" }[fv.tier];
   const esdLabel = { low: "Low", mid: "Moderate", high: "High" }[esdInterp.tier];
@@ -727,18 +842,25 @@ function buildCombinedProfile(esdInterp, fv) {
     mid: ["Continue balanced plyometric and strength work", "Monitor with periodic re-testing", "No single elastic-quality bias to correct"],
     high: ["Maintain current plyometric/elastic work", "Compare against absolute strength markers before adding max-strength emphasis", "Consider maximal strength work only if underlying force capacity is limited"],
   }[esdInterp.tier];
+  const codPriorities = {
+    high: ["Deceleration/braking mechanics — plyometric drop landings, eccentric-focused cutting drills", "Eccentric strength work — tempo/pause eccentrics, Nordic-pattern movements", "Reactive change-of-direction drills, not just pre-planned cuts"],
+    moderate: ["Continue current change-of-direction exposure", "Re-test periodically rather than adding a dedicated block"],
+    low: ["Maintain current deceleration/redirection work — this is not the limiter", "No dedicated COD-specific block needed at this time"],
+  }[codInterp ? codInterp.tier : null] || null;
 
-  const summary = `Sprint F-V is ${sprintLabel.toLowerCase()} (${magnitudeLabel.toLowerCase()}); ESD is ${esdLabel.toLowerCase()}. ${
+  const codLabel = codInterp ? { low: "Low", moderate: "Moderate", high: "High" }[codInterp.tier] : null;
+  const codModifier = codInterp ? codModifierText(archetype.key, codInterp.tier) : null;
+
+  const summary = `Sprint F-V is ${sprintLabel.toLowerCase()} (${magnitudeLabel.toLowerCase()}); ESD is ${esdLabel.toLowerCase()}${codLabel ? `; COD Deficit is ${codLabel.toLowerCase()}` : ""}. ${
     archetype.clean ? `This is a clean match for ${archetype.name} (${archetype.tagline}).` : `${archetype.tagline} — this doesn't cleanly match one of the four named archetypes; review individually.`
   }`;
 
-  return { sprintLabel, esdLabel, magnitude, magnitudeLabel, archetype, aligned: archetype.clean, summary, sprintPriorities, esdPriorities };
+  return { sprintLabel, esdLabel, magnitude, magnitudeLabel, archetype, aligned: archetype.clean, summary, sprintPriorities, esdPriorities, codLabel, codModifier, codPriorities, codInterp };
 }
 
 const ADDITIONAL_TESTS = [
   { key: "broadJump", label: "Broad Jump", placeholder: "e.g. 7'2\"" },
   { key: "rsi", label: "Reactive Strength Index (if possible)", placeholder: "e.g. 1.8" },
-  { key: "shuttle5105", label: "5-10-5 Shuttle", placeholder: "e.g. 4.55s" },
   { key: "medBallChest", label: "Medicine Ball Chest Throw", placeholder: "e.g. 22 ft" },
   { key: "medBallScoop", label: "Medicine Ball Scoop Throw", placeholder: "e.g. 26 ft" },
 ];
@@ -1003,7 +1125,16 @@ function App() {
   const coachFV = calcSprintFV(coachTest.sprint10, coachTest.sprint20, coachTest.sprint30, coachTest.sprint40, coachAnswers.weight);
   const coachSuggestedSummary = convergeSummary(coachEsdInterp, coachFV);
   const finalPriority = priorityOverride || (coachSuggestedSummary && coachSuggestedSummary.priority) || "";
-  const combinedProfile = buildCombinedProfile(coachEsdInterp, coachFV);
+  const coachShuttleAvg = avgShuttleTime(coachTest.shuttle5105Left, coachTest.shuttle5105Right);
+  const coachCOD = calcCODDeficit(coachShuttleAvg, coachTest.sprint10);
+  const coachCODInterp = interpretCODDeficit(coachCOD);
+  const coachShuttleAsymmetry = interpretShuttleAsymmetry(coachTest.shuttle5105Left, coachTest.shuttle5105Right);
+  const coachCODRight = calcCODDeficit(coachTest.shuttle5105Right, coachTest.sprint10);
+  const coachCODInterpRight = interpretCODDeficit(coachCODRight);
+  const coachCODLeft = calcCODDeficit(coachTest.shuttle5105Left, coachTest.sprint10);
+  const coachCODInterpLeft = interpretCODDeficit(coachCODLeft);
+  const coachCODDisagreement = codTierDisagreement(coachCODInterpRight, coachCODInterpLeft);
+  const combinedProfile = buildCombinedProfile(coachEsdInterp, coachFV, coachCODInterp);
   const scorecardEntries = SCORECARD_CATEGORIES.filter((c) => scorecard[c] !== undefined && scorecard[c] !== "");
   const scorecardTotal = scorecardEntries.reduce((sum, c) => sum + Number(scorecard[c]), 0);
   const scorecardMax = SCORECARD_CATEGORIES.length * 3;
@@ -1017,6 +1148,15 @@ function App() {
     : null;
   const sprintFV = calcSprintFV(testResults.sprint10, testResults.sprint20, testResults.sprint30, testResults.sprint40, profile.weight);
   const summary = convergeSummary(esdInterpretation, sprintFV);
+  const shuttleAvg = avgShuttleTime(testResults.shuttle5105Left, testResults.shuttle5105Right);
+  const codDeficit = calcCODDeficit(shuttleAvg, testResults.sprint10);
+  const codInterpretation = interpretCODDeficit(codDeficit);
+  const shuttleAsymmetry = interpretShuttleAsymmetry(testResults.shuttle5105Left, testResults.shuttle5105Right);
+  const codDeficitRight = calcCODDeficit(testResults.shuttle5105Right, testResults.sprint10);
+  const codInterpretationRight = interpretCODDeficit(codDeficitRight);
+  const codDeficitLeft = calcCODDeficit(testResults.shuttle5105Left, testResults.sprint10);
+  const codInterpretationLeft = interpretCODDeficit(codDeficitLeft);
+  const codDisagreement = codTierDisagreement(codInterpretationRight, codInterpretationLeft);
 
   const q = QUESTIONS[step];
   const canProceed = q ? (q.type === "multiselect" ? (profile[q.key] || []).length > 0 : !!profile[q.key]) : true;
@@ -1552,7 +1692,7 @@ function App() {
               <div className="card" style={{ marginBottom: 16 }}>
                 <div style={{ fontSize: 12, letterSpacing: 1, color: "#6EBF7A", textTransform: "uppercase", marginBottom: 12 }}>Additional Tests</div>
                 <p style={{ color: "#8A9198", fontSize: 12, marginBottom: 12 }}>
-                  These require minimal equipment and add useful information about horizontal power, change of direction, and upper-body explosiveness.
+                  These require minimal equipment and add useful information about horizontal power and upper-body explosiveness.
                 </p>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                   {ADDITIONAL_TESTS.map((t) => (
@@ -1565,9 +1705,94 @@ function App() {
               </div>
 
               <div className="card" style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 12, letterSpacing: 1, color: "#E8A33D", textTransform: "uppercase", marginBottom: 12 }}>Change of Direction (COD) Testing</div>
+                <p style={{ color: "#8A9198", fontSize: 12, marginBottom: 12 }}>
+                  5-10-5 Shuttle — record your best time on each side. Both sides matter: averaging them gives a more
+                  representative COD Deficit, and a large gap between sides is its own useful signal.
+                </p>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+                  <div>
+                    <label style={{ fontSize: 12, color: "#8A9198" }}>Right side (best time)</label>
+                    <input placeholder="e.g. 4.55" value={testResults.shuttle5105Right || ""} onChange={(e) => setTest("shuttle5105Right", e.target.value)} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 12, color: "#8A9198" }}>Left side (best time)</label>
+                    <input placeholder="e.g. 4.60" value={testResults.shuttle5105Left || ""} onChange={(e) => setTest("shuttle5105Left", e.target.value)} />
+                  </div>
+                </div>
+
+                {(codInterpretationRight || codInterpretationLeft) && (
+                  <div style={{ background: "#161A1D", border: "1px solid #2C3236", padding: "10px 12px", marginBottom: 10 }}>
+                    <div style={{ fontSize: 12, color: "#8A9198", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>COD Deficit by side</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                      <div>
+                        <div style={{ fontSize: 12, color: "#8A9198" }}>Right</div>
+                        {codInterpretationRight ? (
+                          <>
+                            <div style={{ fontSize: 13, color: "#E8ECEE" }}>{codDeficitRight.toFixed(2)}s</div>
+                            <div style={{ fontSize: 12, color: "#E8A33D" }}>{codInterpretationRight.label}</div>
+                          </>
+                        ) : <div style={{ fontSize: 12, color: "#5C6469" }}>—</div>}
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 12, color: "#8A9198" }}>Left</div>
+                        {codInterpretationLeft ? (
+                          <>
+                            <div style={{ fontSize: 13, color: "#E8ECEE" }}>{codDeficitLeft.toFixed(2)}s</div>
+                            <div style={{ fontSize: 12, color: "#E8A33D" }}>{codInterpretationLeft.label}</div>
+                          </>
+                        ) : <div style={{ fontSize: 12, color: "#5C6469" }}>—</div>}
+                      </div>
+                    </div>
+                    {codDisagreement && (
+                      <div style={{ background: "#3A1F1D", border: "1px solid #6B2E29", padding: "8px 10px", marginTop: 10 }}>
+                        <div style={{ fontSize: 12, color: "#E4837B", fontWeight: 600, marginBottom: 2 }}>⚠ Sides disagree</div>
+                        <div style={{ fontSize: 12, color: "#E8ECEE" }}>{codDisagreement.text}</div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {shuttleAsymmetry && (
+                  <div style={{ background: "#161A1D", border: "1px solid #2C3236", padding: "10px 12px", marginBottom: 10 }}>
+                    <div style={{ fontSize: 13, color: "#E8ECEE" }}>
+                      Right: {parseFloat(testResults.shuttle5105Right).toFixed(2)}s · Left: {parseFloat(testResults.shuttle5105Left).toFixed(2)}s ·
+                      Average: <strong>{shuttleAvg.toFixed(2)}s</strong>
+                    </div>
+                    <div style={{ fontSize: 13, color: shuttleAsymmetry.tier === "high" ? "#E4837B" : "#E8A33D", marginTop: 4 }}>
+                      {shuttleAsymmetry.label} ({shuttleAsymmetry.diff.toFixed(2)}s{shuttleAsymmetry.slowerSide ? `, ${shuttleAsymmetry.slowerSide} slower` : ""})
+                    </div>
+                    {shuttleAsymmetry.tier !== "low" && (
+                      <div style={{ fontSize: 12, color: "#8A9198", marginTop: 2 }}>
+                        Worth reviewing the slower side's mechanics directly — a gap this size can point to a unilateral
+                        mobility, stability, or strength limiter rather than a general change-of-direction issue.
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {codInterpretation && (
+                  <div style={{ background: "#161A1D", border: "1px solid #2C3236", padding: "10px 12px" }}>
+                    <div style={{ fontSize: 13, color: "#E8ECEE" }}>
+                      Change of Direction (COD) Deficit — Average: <strong>{codDeficit.toFixed(2)}s</strong>
+                    </div>
+                    <div style={{ fontSize: 13, color: "#E8A33D", marginTop: 4 }}>{codInterpretation.label}</div>
+                    <div style={{ fontSize: 12, color: "#8A9198", marginTop: 2 }}>{codInterpretation.detail}</div>
+                    <p style={{ fontSize: 10, color: "#5C6469", marginTop: 8, marginBottom: 0 }}>
+                      This averaged number is what feeds your Athlete Profile's training priority below — but check the per-side
+                      breakdown above too, since averaging can smooth over a real difference between your right and left sides.
+                      COD Deficit = average 5-10-5 Shuttle time − 10-yard sprint time. This number reads larger than "COD Deficit"
+                      figures you may see elsewhere, since the 5-10-5 covers 20 total yards with two direction changes rather than
+                      a single matched-distance turn — that's expected, not an error.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <div className="card" style={{ marginBottom: 16 }}>
                 <div style={{ fontSize: 12, letterSpacing: 1, color: "#2D6FE0", textTransform: "uppercase", marginBottom: 14 }}>How this builds your profile</div>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
-                  {["History", "Movement Screen", "Jump Testing", "Sprint Testing", "Athlete Profile"].map((step, i, arr) => (
+                  {["History", "Movement Screen", "Jump Testing", "Sprint Testing", "COD Testing", "Athlete Profile"].map((step, i, arr) => (
                     <React.Fragment key={step}>
                       <div style={{ background: "#161A1D", border: "1px solid #2C3236", padding: "8px 12px", fontSize: 12, color: "#E8ECEE", textAlign: "center" }}>{step}</div>
                       {i < arr.length - 1 && <span style={{ color: "#5C6469" }}>→</span>}
@@ -2187,6 +2412,34 @@ function App() {
                     <p style={{ fontSize: 12, color: "#888", marginBottom: 24 }}>No sprint testing data on file.</p>
                   )}
 
+                  <div style={{ fontSize: 12, color: "#2D6FE0", fontWeight: 700, letterSpacing: 1, marginBottom: 8 }}>CHANGE OF DIRECTION (COD DEFICIT)</div>
+                  {coachCODInterp ? (
+                    <div style={{ marginBottom: 24 }}>
+                      <p style={{ fontSize: 13, margin: "0 0 4px" }}>
+                        5-10-5 Shuttle — Right: {coachTest.shuttle5105Right || "—"}s{coachCODInterpRight ? ` (${coachCODInterpRight.label}, ${coachCODRight.toFixed(2)}s)` : ""} ·
+                        Left: {coachTest.shuttle5105Left || "—"}s{coachCODInterpLeft ? ` (${coachCODInterpLeft.label}, ${coachCODLeft.toFixed(2)}s)` : ""}
+                      </p>
+                      {coachCODDisagreement && (
+                        <p style={{ fontSize: 12, color: "#B02A20", fontWeight: 600, margin: "4px 0" }}>
+                          ⚠ Sides disagree — {coachCODDisagreement.text}
+                        </p>
+                      )}
+                      <p style={{ fontSize: 13, margin: "8px 0 4px" }}>
+                        Average: {coachShuttleAvg.toFixed(2)}s · 10yd Sprint: {coachTest.sprint10}s · <strong>COD Deficit (average): {coachCOD.toFixed(2)}s</strong>
+                      </p>
+                      <p style={{ fontSize: 13, margin: "0 0 4px" }}><strong>{coachCODInterp.label}</strong></p>
+                      <p style={{ fontSize: 12, color: "#555" }}>{coachCODInterp.detail}</p>
+                      {coachShuttleAsymmetry && coachShuttleAsymmetry.tier !== "low" && (
+                        <p style={{ fontSize: 12, color: "#B02A20", marginTop: 4 }}>
+                          {coachShuttleAsymmetry.label}: {coachShuttleAsymmetry.diff.toFixed(2)}s ({coachShuttleAsymmetry.slowerSide} slower) —
+                          worth reviewing that side's mechanics directly.
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <p style={{ fontSize: 12, color: "#888", marginBottom: 24 }}>No change-of-direction testing data on file (needs both shuttle sides and 10-yard sprint).</p>
+                  )}
+
                   <div style={{ background: "#1B2A45", padding: 16, marginBottom: combinedProfile ? 24 : 0 }}>
                     <div style={{ fontSize: 12, color: "#8FA8D9", fontWeight: 700, letterSpacing: 1, marginBottom: 6 }}>TRAINING PRIORITY</div>
                     <div style={{ fontSize: 16, color: "#FFFFFF", fontWeight: 700 }}>{finalPriority || "Not yet determined"}</div>
@@ -2194,9 +2447,10 @@ function App() {
 
                   {combinedProfile && (
                     <div style={{ background: "#DCE9F9", border: "1px solid #B8D2ED", padding: 16 }}>
-                      <div style={{ fontSize: 13, color: "#1B3A5C", fontWeight: 700, marginBottom: 2 }}>⊙ COMBINED ATHLETIC PROFILE — SPRINT F-V + ESD</div>
+                      <div style={{ fontSize: 13, color: "#1B3A5C", fontWeight: 700, marginBottom: 2 }}>⊙ COMBINED ATHLETIC PROFILE — SPRINT F-V + ESD{combinedProfile.codLabel ? " + COD DEFICIT" : ""}</div>
                       <div style={{ fontSize: 10, color: "#4A5A70", marginBottom: 10 }}>
                         ESD is used here as a practical substitute for iso belt-squat DSI, which this platform doesn't measure directly.
+                        {combinedProfile.codLabel && " COD Deficit is a modifier layered on top of the archetype below, not a fifth classification — based on the averaged left/right time; check the per-side breakdown above for a real gap between sides."}
                       </div>
 
                       <div style={{ background: "#fff", border: `1px solid ${combinedProfile.archetype.clean ? "#1B3A5C" : "#D5D9DB"}`, padding: 12, marginBottom: 12 }}>
@@ -2210,6 +2464,9 @@ function App() {
                         <span style={{ background: "#FBE0DC", color: "#B02A20", fontSize: 12, fontWeight: 700, padding: "6px 12px" }}>Sprint F-V: {combinedProfile.sprintLabel}</span>
                         <span style={{ background: "#DCE9F9", border: "1px solid #B8D2ED", color: "#1B3A5C", fontSize: 12, fontWeight: 700, padding: "6px 12px" }}>ESD: {combinedProfile.esdLabel}</span>
                         <span style={{ background: "#E8F3E3", border: "1px solid #C3E0B4", color: "#3A6B1F", fontSize: 12, fontWeight: 700, padding: "6px 12px" }}>{combinedProfile.magnitudeLabel}</span>
+                        {combinedProfile.codLabel && (
+                          <span style={{ background: "#FDEBD3", border: "1px solid #F0C892", color: "#8A5A1E", fontSize: 12, fontWeight: 700, padding: "6px 12px" }}>COD Deficit: {combinedProfile.codLabel}</span>
+                        )}
                         <span style={{ background: "#fff", border: "1px solid #D5D9DB", color: "#333", fontSize: 12, fontWeight: 700, padding: "6px 12px" }}>
                           {combinedProfile.archetype.clean ? "Clean archetype match" : "Mixed / hybrid profile"}
                         </span>
@@ -2217,7 +2474,15 @@ function App() {
                       <div style={{ background: "#fff", padding: 12, marginBottom: 12, fontSize: 13, color: "#222", lineHeight: 1.5 }}>
                         {combinedProfile.summary}
                       </div>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+
+                      {combinedProfile.codModifier && (
+                        <div style={{ background: "#FDEBD3", border: "1px solid #F0C892", padding: 12, marginBottom: 12 }}>
+                          <div style={{ fontSize: 12, color: "#8A5A1E", fontWeight: 700, marginBottom: 6 }}>How COD Deficit modifies this profile</div>
+                          <div style={{ fontSize: 12, color: "#333", lineHeight: 1.6 }}>{combinedProfile.codModifier}</div>
+                        </div>
+                      )}
+
+                      <div style={{ display: "grid", gridTemplateColumns: combinedProfile.codPriorities ? "1fr 1fr 1fr" : "1fr 1fr", gap: 12, marginBottom: 12 }}>
                         <div style={{ background: "#FBE9E7", padding: 12 }}>
                           <div style={{ fontSize: 12, color: "#B02A20", fontWeight: 700, marginBottom: 6 }}>Sprint F-V priorities</div>
                           <ol style={{ margin: 0, paddingLeft: 16, fontSize: 12, color: "#333", lineHeight: 1.7 }}>
@@ -2230,10 +2495,18 @@ function App() {
                             {combinedProfile.esdPriorities.map((p) => <li key={p}>{p}</li>)}
                           </ol>
                         </div>
+                        {combinedProfile.codPriorities && (
+                          <div style={{ background: "#FDEBD3", padding: 12 }}>
+                            <div style={{ fontSize: 12, color: "#8A5A1E", fontWeight: 700, marginBottom: 6 }}>COD Deficit priorities</div>
+                            <ol style={{ margin: 0, paddingLeft: 16, fontSize: 12, color: "#333", lineHeight: 1.7 }}>
+                              {combinedProfile.codPriorities.map((p) => <li key={p}>{p}</li>)}
+                            </ol>
+                          </div>
+                        )}
                       </div>
                       <div style={{ fontSize: 10, color: "#4A5A70", lineHeight: 1.5 }}>
-                        These bands (ESD tiers, sprint F-V tiers, and output-magnitude thresholds) are initial practical
-                        starting points, not validated diagnostic cutoffs — calibrate against your own athlete population over time.
+                        These bands (ESD tiers, sprint F-V tiers, output-magnitude thresholds, and COD Deficit bands) are initial
+                        practical starting points, not validated diagnostic cutoffs — calibrate against your own athlete population over time.
                       </div>
                     </div>
                   )}
