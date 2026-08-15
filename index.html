@@ -1319,7 +1319,46 @@ function App() {
                 alt="Sample assessment report and program card"
                 style={{ width: "100%", display: "block", border: "2px solid #2D6FE0" }}
               />
+              <div style={{ marginTop: 20, paddingTop: 20, borderTop: "1px solid #262B2F" }}>
+                <p style={{ color: "#B2B8BC", fontSize: 14, lineHeight: 1.7, fontStyle: "italic", margin: "0 0 12px" }}>
+                  "For over 5 years I have had the opportunity to be trained by Chris Osmond. His willingness to
+                  partake in all aspect of my training routine is something I am very grateful for. His initial
+                  functional movement screens, nutritional guidelines and strength programs are something I live
+                  by. Anybody looking to get in peak physical condition and have someone who cares for them and
+                  their well-being should use Chris as a trainer. I have personally seen exceptional results and
+                  recommend his top notch training skills to everyone."
+                </p>
+                <div style={{ color: "#8A9198", fontSize: 12 }}>
+                  <span style={{ color: "#E8ECEE", fontWeight: 600 }}>Mike Carnegie</span> — Former Professional
+                  Indoor Lacrosse Player (Calgary Roughnecks, National Lacrosse League)
+                </div>
+              </div>
             </div>
+          </div>
+
+          <div className="card" style={{ marginTop: 24, display: "flex", gap: 24, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ flex: "1 1 320px" }}>
+              <div style={{ fontSize: 12, letterSpacing: 1.5, color: "#2D6FE0", textTransform: "uppercase", marginBottom: 8 }}>From the coach</div>
+              <div style={{ fontFamily: "Barlow Condensed, sans-serif", fontSize: 24, fontWeight: 700, color: "#E8ECEE", marginBottom: 8 }}>
+                Beyond the Single Number
+              </div>
+              <p style={{ color: "#B2B8BC", fontSize: 14, lineHeight: 1.7, margin: "0 0 12px" }}>
+                The framework behind everything on this site, written out in full. This book walks through how the
+                Piston, Spring, Rocket, and Builder profiles actually get built from real testing data, the training
+                priorities that follow from each one, and how to run the whole system with nothing more than a
+                stopwatch and a jump mat if that's what you've got.
+              </p>
+              <p style={{ color: "#5C6469", fontSize: 12, margin: 0 }}>
+                The ebook — along with the rest of the Coaching Resources library — is included with a Coaching
+                Resources subscription.
+              </p>
+            </div>
+            <button
+              onClick={() => setScreen("resources")}
+              style={{ background: "#2D6FE0", color: "#fff", border: "none", padding: "12px 22px", fontSize: 14, cursor: "pointer", whiteSpace: "nowrap" }}
+            >
+              Get it in Coaching Resources
+            </button>
           </div>
 
           <RULE_LINE />
@@ -2591,6 +2630,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(<App />);
 </script>
 </body>
 </html>
+
 
 
 
