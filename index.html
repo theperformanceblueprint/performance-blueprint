@@ -39,8 +39,20 @@ const supabaseClient = (window.supabase && SUPABASE_URL && SUPABASE_ANON_KEY)
   : null;
 const backendReady = !!supabaseClient;
 
+// Every email the app sends to Supabase or Stripe gets funneled through
+// this first. Without it, "John.Smith@Gmail.com" at checkout and
+// "john.smith@gmail.com" when checking access later are two different
+// strings as far as an exact-match database lookup is concerned — a real
+// subscriber can type their own email correctly and still get told no
+// subscription exists, simply because the casing or a stray space (common
+// on mobile keyboards with autocapitalize) doesn't match byte-for-byte.
+function normalizeEmail(email) {
+  return (email || "").trim().toLowerCase();
+}
+
 async function getOrCreateAthlete(email) {
   if (!supabaseClient || !email) return null;
+  email = normalizeEmail(email);
   try {
     let { data: athlete } = await supabaseClient.from("athletes").select("id").eq("email", email).maybeSingle();
     if (!athlete) {
@@ -83,6 +95,7 @@ async function uploadMovementVideo(athleteId, movementId, file) {
 
 async function startCheckout(plan, email) {
   if (!EDGE_FUNCTIONS_URL) return null;
+  email = normalizeEmail(email);
   try {
     const res = await fetch(`${EDGE_FUNCTIONS_URL}/create-checkout-session`, {
       method: "POST",
@@ -99,6 +112,7 @@ async function startCheckout(plan, email) {
 
 async function checkSubscriptionStatus(email) {
   if (!EDGE_FUNCTIONS_URL || !email) return null;
+  email = normalizeEmail(email);
   try {
     const res = await fetch(`${EDGE_FUNCTIONS_URL}/check-subscription?email=${encodeURIComponent(email)}`, {
       headers: { Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
@@ -124,6 +138,7 @@ async function fetchResources() {
 
 async function notifyIntakeComplete(email) {
   if (!EDGE_FUNCTIONS_URL) return;
+  email = normalizeEmail(email);
   try {
     await fetch(`${EDGE_FUNCTIONS_URL}/notify-intake-complete`, {
       method: "POST",
@@ -140,6 +155,7 @@ async function notifyIntakeComplete(email) {
 // subscription (Monthly Video Coaching).
 async function checkVideoCoachingAccess(email) {
   if (!supabaseClient || !email) return { hasAccess: false };
+  email = normalizeEmail(email);
   try {
     const { data: athlete } = await supabaseClient.from("athletes").select("id").eq("email", email).maybeSingle();
     if (!athlete) return { hasAccess: false };
@@ -233,6 +249,7 @@ async function submitVideoFeedback(submissionId, feedbackText, feedbackVideoUrl)
 
 async function getResourceUrl(resourceId, email) {
   if (!EDGE_FUNCTIONS_URL) return { error: "Backend not configured" };
+  email = normalizeEmail(email);
   try {
     const res = await fetch(`${EDGE_FUNCTIONS_URL}/get-resource-url`, {
       method: "POST",
@@ -252,6 +269,7 @@ async function getResourceUrl(resourceId, email) {
 // test results, and which Phase 2 movements they've uploaded video for.
 async function fetchAthleteForReport(email) {
   if (!supabaseClient || !email) return { error: "Backend not configured." };
+  email = normalizeEmail(email);
   try {
     const { data: athlete } = await supabaseClient.from("athletes").select("id").eq("email", email).maybeSingle();
     if (!athlete) return { error: "No athlete found with that email." };
