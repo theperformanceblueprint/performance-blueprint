@@ -925,6 +925,8 @@ function App() {
   const [resourceList, setResourceList] = useState(null); // null = not loaded yet, [] = loaded empty, array = loaded
   const [openingResourceId, setOpeningResourceId] = useState(null);
   const [resourceOpenError, setResourceOpenError] = useState("");
+  const [checkingSub, setCheckingSub] = useState(false);
+  const [subCheckMsg, setSubCheckMsg] = useState("");
 
   // --- Coach Tools (assessment report builder) ---
   const [coachLookupEmail, setCoachLookupEmail] = useState("");
@@ -1042,6 +1044,27 @@ function App() {
     } else {
       if (newTab) newTab.close();
       setResourceOpenError((result && result.error) || "Couldn't open this resource.");
+    }
+  };
+
+  // Checks subscription status for the email currently typed into the
+  // Resources page. This is the missing link for a subscriber visiting on a
+  // new device/browser (no saved localStorage email, no fresh Stripe
+  // redirect) — without this, typing an email updated local state only and
+  // never actually looked up whether it had an active subscription, so nothing
+  // in the UI ever changed and it looked like the page had done nothing at all.
+  const checkResourceAccess = async () => {
+    const email = profile.email || checkoutEmail;
+    if (!email) return;
+    setCheckingSub(true);
+    setSubCheckMsg("");
+    const sub = await checkSubscriptionStatus(email);
+    setCheckingSub(false);
+    if (sub && sub.status === "active" && sub.plan) {
+      setSubscribed(sub.plan);
+      setSubCheckMsg("");
+    } else {
+      setSubCheckMsg("No active subscription found for that email. Choose a plan above, or double-check the email you subscribed with.");
     }
   };
 
@@ -1911,7 +1934,24 @@ function App() {
           </div>
           <RULE_LINE />
 
-          {backendReady && (
+          {backendReady && !subscribed && (
+            <div style={{ marginTop: 16, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <label style={{ fontSize: 12, color: "#8A9198" }}>Your email (to open resources):</label>
+              <input
+                type="email"
+                placeholder="you@example.com"
+                value={profile.email || checkoutEmail}
+                onChange={(e) => { setCheckoutEmail(e.target.value); setProfile({ ...profile, email: e.target.value }); setSubCheckMsg(""); }}
+                onBlur={checkResourceAccess}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); checkResourceAccess(); } }}
+                style={{ maxWidth: 260 }}
+              />
+              {checkingSub && <span style={{ color: "#8A9198", fontSize: 12 }}>Checking subscription…</span>}
+              {!checkingSub && subCheckMsg && <span style={{ color: "#E4837B", fontSize: 12 }}>{subCheckMsg}</span>}
+              {resourceOpenError && <span style={{ color: "#E4837B", fontSize: 12 }}>{resourceOpenError}</span>}
+            </div>
+          )}
+          {backendReady && subscribed && (
             <div style={{ marginTop: 16, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
               <label style={{ fontSize: 12, color: "#8A9198" }}>Your email (to open resources):</label>
               <input
